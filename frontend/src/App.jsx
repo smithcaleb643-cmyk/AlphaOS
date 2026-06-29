@@ -211,18 +211,50 @@ function App() {
     }
 
     if (currentPage === "Trader") {
-      return (
-        <PlaceholderPage
-          title="Trader"
-          subtitle="Paper trading and trade management page."
-          items={[
-            { title: "Open Positions", text: "Entry, size, value, P&L, status." },
-            { title: "Execute Plan", text: "Alpha can simulate trades before live trading." },
-            { title: "Review", text: "Alpha explains whether to hold, exit, or tighten stop." },
-          ]}
-        />
-      );
-    }
+  return (
+    <main className="single-page">
+      <section className="panel placeholder-page">
+        <h2>Alpha Paper Trader</h2>
+        <p>Simulated trading engine connected to Alpha OS backend.</p>
+
+        <div className="modal-grid">
+          <div>
+            <span>Cash</span>
+            <strong>$10,000</strong>
+          </div>
+          <div>
+            <span>Equity</span>
+            <strong>$10,000</strong>
+          </div>
+          <div>
+            <span>Open Trades</span>
+            <strong>0</strong>
+          </div>
+          <div>
+            <span>Closed Trades</span>
+            <strong>0</strong>
+          </div>
+          <div>
+            <span>Win Rate</span>
+            <strong>0%</strong>
+          </div>
+          <div>
+            <span>Total P&L</span>
+            <strong>$0.00</strong>
+          </div>
+        </div>
+
+        <div className="placeholder-card">
+          <h3>Next Step</h3>
+          <p>
+            Alpha Paper Trader backend is live. Next we connect this page to
+            real paper trade data from /paper/performance and /paper/state.
+          </p>
+        </div>
+      </section>
+    </main>
+  );
+}
 
     if (currentPage === "Portfolio") {
       return (

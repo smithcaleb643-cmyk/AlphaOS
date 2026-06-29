@@ -4,7 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from core.alpha_brain import score_coin
 from database.memory import setup_database, save_scan, get_scans
 from services.market_service import get_token_pairs, get_market_summary, scan_live_market
-
+from core.paper_trader import create_paper_trade, get_paper_state
+from core.trade_manager import update_open_trades
+from core.performance import get_performance
 app = FastAPI(title="Alpha OS Backend")
 
 app.add_middleware(
@@ -30,29 +32,32 @@ def home():
 def scan():
     live_coins = scan_live_market(limit=8)
     results = []
+    paper_trades = []
 
     for coin in live_coins:
         result = score_coin(coin)
         save_scan(result["coin_name"], result)
         results.append(result)
 
+        if result.get("action") == "BUY":
+            trade_signal = {
+                **result,
+                "price_usd": coin.get("price_usd") or coin.get("priceUsd") or 0,
+            }
+
+            trade = create_paper_trade(trade_signal)
+
+            if trade:
+                paper_trades.append(trade)
+
     results = sorted(results, key=lambda item: item.get("score", 0), reverse=True)
 
     return {
         "count": len(results),
-        "results": results
+        "results": results,
+        "paper_trades_created": len(paper_trades),
+        "paper_trades": paper_trades,
     }
-
-
-@app.get("/memory")
-def memory():
-    scans = get_scans()
-
-    return {
-        "count": len(scans),
-        "scans": scans
-    }
-
 
 @app.get("/market/token/{token_address}")
 def market_token(token_address: str):
@@ -77,4 +82,32 @@ def discover():
     return {
         "count": len(coins),
         "coins": coins
+    }@app.post("/paper/trade")
+def paper_trade(signal: dict):
+    trade = create_paper_trade(signal)
+
+    if not trade:
+        return {
+            "created": False,
+            "message": "No valid price for trade"
+        }
+
+    return {
+        "created": True,
+        "trade": trade
     }
+
+
+@app.get("/paper/state")
+def paper_state_endpoint():
+    return get_paper_state()
+
+
+@app.get("/paper/performance")
+def paper_performance_endpoint():
+    return get_performance()
+
+
+@app.post("/paper/update")
+def paper_update(price_lookup: dict):
+    return update_open_trades(price_lookup)
