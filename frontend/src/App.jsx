@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import AlphaLiveChart from "./AlphaLiveChart";
 import "./App.css";
 
+const API = "http://127.0.0.1:8000";
+
 const defaultWatchlist = [
   {
     coin_name: "three.ws",
@@ -52,7 +54,12 @@ const defaultWatchlist = [
 
 function formatMoney(value) {
   if (value === undefined || value === null) return "—";
-  return `$${Number(value).toLocaleString()}`;
+  return `$${Number(value).toLocaleString(undefined, { maximumFractionDigits: 2 })}`;
+}
+
+function formatSmall(value) {
+  if (value === undefined || value === null) return "—";
+  return `$${Number(value).toFixed(6)}`;
 }
 
 function PlaceholderPage({ title, subtitle, items }) {
@@ -88,50 +95,104 @@ function App() {
   const [isScanning, setIsScanning] = useState(false);
   const [isLoadingMemory, setIsLoadingMemory] = useState(false);
 
+  const [paperPerformance, setPaperPerformance] = useState(null);
+  const [paperState, setPaperState] = useState(null);
+  const [learningState, setLearningState] = useState(null);
+  const [engineState, setEngineState] = useState(null);
+
   async function loadMemory() {
     setIsLoadingMemory(true);
 
     try {
-      const response = await fetch("http://127.0.0.1:8000/memory");
+      const response = await fetch(`${API}/memory`);
+      if (!response.ok) {
+        setMemory([]);
+        return;
+      }
+
       const data = await response.json();
       setMemory(data.scans || []);
     } catch (error) {
-      console.error(error);
-      alert("Could not load Alpha memory.");
+      console.error("Memory load failed:", error);
+      setMemory([]);
     }
 
     setIsLoadingMemory(false);
   }
 
-  async function runScan() {
-  setIsScanning(true);
+  async function loadPaperTrader() {
+    try {
+      const perf = await fetch(`${API}/paper/performance`).then((r) => r.json());
+      const state = await fetch(`${API}/paper/state`).then((r) => r.json());
+      const learning = await fetch(`${API}/paper/learning`).then((r) => r.json());
+      const engine = await fetch(`${API}/engine/state`).then((r) => r.json());
 
-  try {
-    const response = await fetch("http://127.0.0.1:8000/scan");
-    const data = await response.json();
-
-    console.log("LIVE SCAN:", data);
-
-    if (!data.results || data.results.length === 0) {
-      alert("Alpha scanned but found no live coins yet.");
-      setIsScanning(false);
-      return;
+      setPaperPerformance(perf);
+      setPaperState(state);
+      setLearningState(learning);
+      setEngineState(engine);
+    } catch (error) {
+      console.error("Paper trader load failed:", error);
     }
-
-    setCoins(data.results);
-    setSelectedCoin(data.results[0]);
-
-    await loadMemory();
-  } catch (error) {
-    console.error(error);
-    alert("Alpha backend is not responding.");
   }
 
-  setIsScanning(false);
-}
+  async function startAlphaEngine() {
+    try {
+      await fetch(`${API}/engine/start`, { method: "POST" });
+      await loadPaperTrader();
+    } catch (error) {
+      console.error("Engine start failed:", error);
+      alert("Could not start Alpha Engine.");
+    }
+  }
+
+  async function stopAlphaEngine() {
+    try {
+      await fetch(`${API}/engine/stop`, { method: "POST" });
+      await loadPaperTrader();
+    } catch (error) {
+      console.error("Engine stop failed:", error);
+      alert("Could not stop Alpha Engine.");
+    }
+  }
+
+  async function runScan() {
+    setIsScanning(true);
+
+    try {
+      const response = await fetch(`${API}/scan`);
+      const data = await response.json();
+
+      console.log("LIVE SCAN:", data);
+
+      if (!data.results || data.results.length === 0) {
+        alert("Alpha scanned but found no live coins yet.");
+        setIsScanning(false);
+        return;
+      }
+
+      setCoins(data.results);
+      setSelectedCoin(data.results[0]);
+
+      await loadMemory();
+      await loadPaperTrader();
+    } catch (error) {
+      console.error(error);
+      alert("Alpha backend is not responding.");
+    }
+
+    setIsScanning(false);
+  }
 
   useEffect(() => {
     loadMemory();
+    loadPaperTrader();
+
+    const timer = setInterval(() => {
+      loadPaperTrader();
+    }, 3000);
+
+    return () => clearInterval(timer);
   }, []);
 
   useEffect(() => {
@@ -202,59 +263,130 @@ function App() {
           <section className="panel placeholder-page">
             <h2>Live Charts</h2>
             <p>Real DexScreener market chart embedded inside Alpha OS.</p>
-
             <AlphaLiveChart />
-            
           </section>
         </main>
       );
     }
 
     if (currentPage === "Trader") {
-  return (
-    <main className="single-page">
-      <section className="panel placeholder-page">
-        <h2>Alpha Paper Trader</h2>
-        <p>Simulated trading engine connected to Alpha OS backend.</p>
+      const perf = paperPerformance || {};
+      const state = paperState || {};
+      const learning = learningState || {};
+      const engine = engineState || {};
+      const openTrades = state.open_trades || [];
+      const closedTrades = state.closed_trades || [];
 
-        <div className="modal-grid">
-          <div>
-            <span>Cash</span>
-            <strong>$10,000</strong>
-          </div>
-          <div>
-            <span>Equity</span>
-            <strong>$10,000</strong>
-          </div>
-          <div>
-            <span>Open Trades</span>
-            <strong>0</strong>
-          </div>
-          <div>
-            <span>Closed Trades</span>
-            <strong>0</strong>
-          </div>
-          <div>
-            <span>Win Rate</span>
-            <strong>0%</strong>
-          </div>
-          <div>
-            <span>Total P&L</span>
-            <strong>$0.00</strong>
-          </div>
-        </div>
+      return (
+        <main className="single-page">
+          <section className="panel placeholder-page">
+            <div className="section-header">
+              <div>
+                <h2>Alpha Paper Trader</h2>
+                <p>Fully automated paper trading and learning system.</p>
+              </div>
 
-        <div className="placeholder-card">
-          <h3>Next Step</h3>
-          <p>
-            Alpha Paper Trader backend is live. Next we connect this page to
-            real paper trade data from /paper/performance and /paper/state.
-          </p>
-        </div>
-      </section>
-    </main>
-  );
-}
+              <div className="header-actions">
+                <button onClick={startAlphaEngine}>Start Engine</button>
+                <button onClick={stopAlphaEngine}>Stop Engine</button>
+              </div>
+            </div>
+
+            <div className="modal-grid">
+              <div>
+                <span>Engine</span>
+                <strong className={engine.running ? "green" : "red"}>
+                  {engine.running ? "RUNNING" : "STOPPED"}
+                </strong>
+              </div>
+              <div>
+                <span>Cycles</span>
+                <strong>{engine.cycles ?? 0}</strong>
+              </div>
+              <div>
+                <span>Cash</span>
+                <strong>{formatMoney(perf.cash ?? 10000)}</strong>
+              </div>
+              <div>
+                <span>Equity</span>
+                <strong>{formatMoney(perf.equity ?? 10000)}</strong>
+              </div>
+              <div>
+                <span>Open Trades</span>
+                <strong>{perf.open_trades ?? openTrades.length}</strong>
+              </div>
+              <div>
+                <span>Closed Trades</span>
+                <strong>{perf.closed_trades ?? closedTrades.length}</strong>
+              </div>
+              <div>
+                <span>Win Rate</span>
+                <strong>{perf.win_rate ?? 0}%</strong>
+              </div>
+              <div>
+                <span>Total P&L</span>
+                <strong>{formatMoney(perf.total_pnl ?? 0)}</strong>
+              </div>
+            </div>
+
+            <div className="placeholder-card">
+              <h3>Engine Status</h3>
+              <p>{engine.message || "Waiting for Alpha Engine..."}</p>
+              <p>Last Scan Count: {engine.last_scan_count ?? 0}</p>
+              <p>Last Trades Created: {engine.last_trades_created ?? 0}</p>
+            </div>
+
+            <div className="placeholder-card">
+              <h3>Open Positions</h3>
+
+              {openTrades.length === 0 ? (
+                <p>No open trades yet. Click Start Engine and let Alpha scan.</p>
+              ) : (
+                openTrades.map((trade) => (
+                  <div className="trade-row" key={trade.id}>
+                    <strong>{trade.symbol || trade.coin_name}</strong>
+                    <span>Entry: {formatSmall(trade.entry_price)}</span>
+                    <span>Now: {formatSmall(trade.current_price)}</span>
+                    <span className={trade.pnl_usd >= 0 ? "green" : "red"}>
+                      {formatMoney(trade.pnl_usd)} / {trade.pnl_percent}%
+                    </span>
+                    <span>{trade.status}</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="placeholder-card">
+              <h3>Closed Trades</h3>
+
+              {closedTrades.length === 0 ? (
+                <p>No closed trades yet. Alpha has not hit TP or SL yet.</p>
+              ) : (
+                closedTrades.slice(-10).reverse().map((trade) => (
+                  <div className="trade-row" key={trade.id}>
+                    <strong>{trade.symbol || trade.coin_name}</strong>
+                    <span>Entry: {formatSmall(trade.entry_price)}</span>
+                    <span>Exit: {formatSmall(trade.current_price)}</span>
+                    <span className={trade.pnl_usd >= 0 ? "green" : "red"}>
+                      {formatMoney(trade.pnl_usd)} / {trade.pnl_percent}%
+                    </span>
+                    <span>{trade.status}</span>
+                  </div>
+                ))
+              )}
+            </div>
+
+            <div className="placeholder-card">
+              <h3>Learning Engine</h3>
+              <p>Total Trades Learned: {learning.total_trades ?? 0}</p>
+              <p>Wins: {learning.wins ?? 0}</p>
+              <p>Losses: {learning.losses ?? 0}</p>
+              <pre>{JSON.stringify(learning.score_buckets || {}, null, 2)}</pre>
+            </div>
+          </section>
+        </main>
+      );
+    }
 
     if (currentPage === "Portfolio") {
       return (
@@ -403,7 +535,6 @@ function App() {
             </div>
 
             <AlphaLiveChart />
-            
           </section>
 
           <section className="analysis-tabs">

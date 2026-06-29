@@ -6,6 +6,8 @@ from database.memory import setup_database, save_scan, get_scans
 from services.market_service import get_token_pairs, get_market_summary, scan_live_market
 from core.paper_trader import create_paper_trade, get_paper_state
 from core.trade_manager import update_open_trades
+from core.learning import get_learning_report
+from core.alpha_engine import start_alpha_engine, stop_alpha_engine, get_alpha_engine_state
 from core.performance import get_performance
 app = FastAPI(title="Alpha OS Backend")
 
@@ -39,10 +41,10 @@ def scan():
         save_scan(result["coin_name"], result)
         results.append(result)
 
-        if result.get("action") == "BUY":
+        if result.get("score", 0) >= 30:
             trade_signal = {
                 **result,
-                "price_usd": coin.get("price_usd") or coin.get("priceUsd") or 0,
+                "price_usd": coin.get("price_usd") or 0,
             }
 
             trade = create_paper_trade(trade_signal)
@@ -111,3 +113,23 @@ def paper_performance_endpoint():
 @app.post("/paper/update")
 def paper_update(price_lookup: dict):
     return update_open_trades(price_lookup)
+
+
+@app.get("/paper/learning")
+def paper_learning():
+    return get_learning_report()
+
+
+@app.post("/engine/start")
+def engine_start():
+    return start_alpha_engine()
+
+
+@app.post("/engine/stop")
+def engine_stop():
+    return stop_alpha_engine()
+
+
+@app.get("/engine/state")
+def engine_state():
+    return get_alpha_engine_state()
