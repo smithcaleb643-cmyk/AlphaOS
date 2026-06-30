@@ -17,8 +17,14 @@ def get_market_summary(token_address):
         return {"found": False, "message": "No pairs found"}
 
     best_pair = pairs[0]
-
     return normalize_pair(best_pair)
+
+
+def safe_float(value):
+    try:
+        return float(value or 0)
+    except (TypeError, ValueError):
+        return 0
 
 
 def normalize_pair(pair):
@@ -29,18 +35,25 @@ def normalize_pair(pair):
     volume = pair.get("volume") or {}
     price_change = pair.get("priceChange") or {}
 
+    price_usd = safe_float(
+        pair.get("priceUsd")
+        or pair.get("price_usd")
+        or pair.get("usdPrice")
+        or pair.get("price")
+    )
+
     return {
         "found": True,
         "chain": pair.get("chainId"),
         "dex": pair.get("dexId"),
         "pair_address": pair.get("pairAddress"),
         "token_address": base.get("address"),
-        "coin_name": base.get("symbol") or "Unknown",
+        "coin_name": base.get("symbol") or base.get("name") or "Unknown",
         "symbol": base.get("symbol") or "Unknown",
         "base_token": base,
         "quote_token": quote,
-        "price_usd": float(pair.get("priceUsd") or 0),
-        "price_native": float(pair.get("priceNative") or 0),
+        "price_usd": price_usd,
+        "price_native": safe_float(pair.get("priceNative")),
         "price_change": price_change,
         "volume": volume,
         "liquidity": liquidity,
@@ -58,7 +71,8 @@ def discover_solana_tokens(limit=10):
 
     profiles = response.json()
     solana_profiles = [
-        item for item in profiles
+        item
+        for item in profiles
         if item.get("chainId") == "solana" and item.get("tokenAddress")
     ]
 
@@ -79,6 +93,12 @@ def scan_live_market(limit=8):
                 continue
 
             best_pair = pairs[0]
+
+            print("=" * 80)
+            print("RAW PAIR")
+            print(best_pair)
+            print("=" * 80)
+
             normalized = normalize_pair(best_pair)
 
             coin = {
@@ -87,6 +107,7 @@ def scan_live_market(limit=8):
                 "token_address": normalized["token_address"],
                 "pair_address": normalized["pair_address"],
                 "dex_url": normalized["url"],
+                "price_usd": normalized["price_usd"],
                 "liquidity": normalized["liquidity"].get("usd", 0),
                 "volume": normalized["volume"].get("h24", 0),
                 "market_cap": normalized["market_cap"],

@@ -1,14 +1,35 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from core.accounting_auditor import run_accounting_audit
+from core.adaptive_learning import apply_learning_to_signal
 from core.alpha_brain import score_coin
+from core.alpha_engine import start_alpha_engine, stop_alpha_engine, get_alpha_engine_state
+from core.learning import get_learning_report
+from core.learning_memory import save_learning_memory, load_learning_memory
+from core.paper_trader import (
+    create_paper_trade,
+    get_paper_state,
+    close_paper_trade,
+    review_paper_trade,
+    reset_paper_account,
+    set_paper_trade_size,
+)
+from core.performance import get_performance
+from core.price_audit import read_recent_price_events
+from core.system_health import get_system_health
+from core.trade_manager import update_open_trades
+from core.wallet_intelligence import (
+    apply_wallet_intelligence_to_signal,
+    get_wallet_brain_report,
+    save_wallet_scan,
+    learn_wallets_from_closed_trades,
+)
 from database.memory import setup_database, save_scan, get_scans
 from services.market_service import get_token_pairs, get_market_summary, scan_live_market
-from core.paper_trader import create_paper_trade, get_paper_state
-from core.trade_manager import update_open_trades
-from core.learning import get_learning_report
-from core.alpha_engine import start_alpha_engine, stop_alpha_engine, get_alpha_engine_state
-from core.performance import get_performance
+from services.solana_wallet_service import scan_token_wallets
+
+
 app = FastAPI(title="Alpha OS Backend")
 
 app.add_middleware(
@@ -22,12 +43,55 @@ app.add_middleware(
 setup_database()
 
 
+def slim_trade(trade):
+    clean = dict(trade)
+    clean.pop("price_history", None)
+    clean.pop("audit_notes", None)
+
+    if isinstance(clean.get("partial_exits"), list):
+        clean["partial_exits"] = clean["partial_exits"][-5:]
+
+    if isinstance(clean.get("real_wallets"), list):
+        clean["real_wallets"] = clean["real_wallets"][:10]
+        clean["wallets"] = clean["real_wallets"]
+
+    return clean
+
+
 @app.get("/")
 def home():
-    return {
-        "message": "Alpha OS backend is running",
-        "status": "online"
-    }
+    return {"message": "Alpha OS backend is running", "status": "online"}
+
+
+@app.get("/system/health")
+def system_health():
+    return get_system_health()
+
+
+@app.get("/wallet/brain")
+def wallet_brain():
+    return get_wallet_brain_report()
+
+
+@app.post("/wallet/learn")
+def wallet_learn():
+    return learn_wallets_from_closed_trades(get_paper_state())
+
+
+@app.get("/wallet/token/{token_address}/scan")
+def wallet_token_scan(token_address: str):
+    scan = scan_token_wallets(token_address, limit=10)
+
+    if not scan.get("ok"):
+        return scan
+
+    saved = save_wallet_scan(
+        token_address=token_address,
+        wallets=scan.get("wallets", []),
+        source=scan.get("source", "public_solana_rpc"),
+    )
+
+    return {**scan, "saved": saved}
 
 
 @app.get("/scan")
@@ -37,16 +101,26 @@ def scan():
     paper_trades = []
 
     for coin in live_coins:
+        token = (
+            coin.get("token_address")
+            or coin.get("address")
+            or coin.get("mint")
+            or coin.get("base_token_address")
+        )
+
+        if token:
+            wallet_scan = scan_token_wallets(token, limit=5)
+            coin["real_wallets"] = wallet_scan.get("wallets", [])
+
         result = score_coin(coin)
-        save_scan(result["coin_name"], result)
+        result = apply_learning_to_signal(result)
+        result = apply_wallet_intelligence_to_signal(result, coin)
+
+        save_scan(result.get("coin_name", "Unknown"), result)
         results.append(result)
 
-        if result.get("score", 0) >= 30:
-            trade_signal = {
-                **result,
-                "price_usd": coin.get("price_usd") or 0,
-            }
-
+        if result.get("score", 0) >= 30 and result.get("action") != "REJECT":
+            trade_signal = {**coin, **result, "price_usd": coin.get("price_usd") or 0}
             trade = create_paper_trade(trade_signal)
 
             if trade:
@@ -61,15 +135,17 @@ def scan():
         "paper_trades": paper_trades,
     }
 
+
+@app.get("/memory")
+def memory():
+    scans = get_scans()
+    return {"count": len(scans), "scans": scans}
+
+
 @app.get("/market/token/{token_address}")
 def market_token(token_address: str):
     pairs = get_token_pairs(token_address)
-
-    return {
-        "token_address": token_address,
-        "count": len(pairs),
-        "pairs": pairs
-    }
+    return {"token_address": token_address, "count": len(pairs), "pairs": pairs}
 
 
 @app.get("/market/summary/{token_address}")
@@ -80,29 +156,58 @@ def market_summary(token_address: str):
 @app.get("/discover")
 def discover():
     coins = scan_live_market(limit=12)
+    return {"count": len(coins), "coins": coins}
 
-    return {
-        "count": len(coins),
-        "coins": coins
-    }@app.post("/paper/trade")
+
+@app.post("/paper/trade")
 def paper_trade(signal: dict):
+    signal = apply_wallet_intelligence_to_signal(signal, signal)
     trade = create_paper_trade(signal)
 
     if not trade:
         return {
             "created": False,
-            "message": "No valid price for trade"
+            "message": "No valid price, duplicate open trade, or not enough cash.",
         }
 
-    return {
-        "created": True,
-        "trade": trade
-    }
+    return {"created": True, "trade": trade}
+
+
+@app.post("/paper/reset")
+def paper_reset(settings: dict):
+    stop_alpha_engine()
+
+    starting_cash = settings.get("starting_cash", 10000)
+    trade_size = settings.get("trade_size", None)
+
+    return reset_paper_account(
+        starting_cash=starting_cash,
+        trade_size=trade_size,
+    )
+
+
+@app.post("/paper/trade-size")
+def paper_trade_size(settings: dict):
+    trade_size = settings.get("trade_size", 100)
+    return set_paper_trade_size(trade_size)
 
 
 @app.get("/paper/state")
 def paper_state_endpoint():
-    return get_paper_state()
+    state = get_paper_state()
+
+    open_trades = state.get("open_trades", [])
+    closed_trades = state.get("closed_trades", [])
+
+    return {
+        "cash": state.get("cash", 10000),
+        "settings": state.get("settings", {}),
+        "open_trades": [slim_trade(t) for t in open_trades[-50:]],
+        "closed_trades": [slim_trade(t) for t in closed_trades[-50:]],
+        "open_count": len(open_trades),
+        "closed_count": len(closed_trades),
+        "limited": True,
+    }
 
 
 @app.get("/paper/performance")
@@ -118,6 +223,46 @@ def paper_update(price_lookup: dict):
 @app.get("/paper/learning")
 def paper_learning():
     return get_learning_report()
+
+
+@app.post("/paper/learning/save")
+def save_learning():
+    return save_learning_memory(reason="manual_api_save")
+
+
+@app.get("/paper/learning/saved")
+def get_saved_learning():
+    return load_learning_memory()
+
+
+@app.get("/paper/audit")
+def paper_audit(limit: int = 100):
+    return {"events": read_recent_price_events(limit)}
+
+
+@app.get("/paper/audit/accounting")
+def paper_accounting_audit():
+    return run_accounting_audit()
+
+
+@app.post("/paper/trade/{trade_id}/review")
+def review_trade(trade_id: int):
+    trade = review_paper_trade(trade_id)
+
+    if trade is None:
+        return {"ok": False, "message": "Trade not found"}
+
+    return {"ok": True, "trade": trade}
+
+
+@app.post("/paper/trade/{trade_id}/sell")
+def sell_trade(trade_id: int):
+    trade = close_paper_trade(trade_id, reason="MANUAL_SELL")
+
+    if trade is None:
+        return {"ok": False, "message": "Trade not found"}
+
+    return {"ok": True, "trade": trade}
 
 
 @app.post("/engine/start")
