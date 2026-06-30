@@ -161,15 +161,15 @@
     "VLXFRyxhAndY21gS4ys6ZWyJKHeP9DQgoqHhq3ARs2H": {
       "address": "VLXFRyxhAndY21gS4ys6ZWyJKHeP9DQgoqHhq3ARs2H",
       "times_seen": 0,
-      "wins": 2,
+      "wins": 3,
       "losses": 3,
-      "total_pnl": -15.1135,
-      "average_pnl": -3.0227,
-      "win_rate": 40.0,
-      "trust_score": 45,
-      "rank": "WEAK",
+      "total_pnl": -13.4662,
+      "average_pnl": -2.2444,
+      "win_rate": 50.0,
+      "trust_score": 62,
+      "rank": "NEUTRAL",
       "first_seen": "2026-06-30T05:02:56.293576",
-      "last_seen": "2026-06-30T05:24:21.515993",
+      "last_seen": "2026-06-30T13:53:54.876920",
       "notes": [],
       "tokens_seen": [
         "DbqbFSSBEDaX9F6hnySDHKmKSE9PU1KTyJ7jwcd3xViS"
@@ -178,15 +178,15 @@
     "ENY9JreWWWtq8jSKfLtXpzjBteknLPdahPCwG7ZCVbJe": {
       "address": "ENY9JreWWWtq8jSKfLtXpzjBteknLPdahPCwG7ZCVbJe",
       "times_seen": 0,
-      "wins": 2,
+      "wins": 3,
       "losses": 3,
-      "total_pnl": -15.1135,
-      "average_pnl": -3.0227,
-      "win_rate": 40.0,
-      "trust_score": 45,
-      "rank": "WEAK",
+      "total_pnl": -13.4662,
+      "average_pnl": -2.2444,
+      "win_rate": 50.0,
+      "trust_score": 62,
+      "rank": "NEUTRAL",
       "first_seen": "2026-06-30T05:02:56.293587",
-      "last_seen": "2026-06-30T05:24:21.516013",
+      "last_seen": "2026-06-30T13:53:54.876962",
       "notes": [],
       "tokens_seen": [
         "DbqbFSSBEDaX9F6hnySDHKmKSE9PU1KTyJ7jwcd3xViS"
@@ -195,15 +195,15 @@
     "R32xAccFis3YzBzGwZ1C4QkGiehLxSao7gDmErA3kjk": {
       "address": "R32xAccFis3YzBzGwZ1C4QkGiehLxSao7gDmErA3kjk",
       "times_seen": 0,
-      "wins": 2,
+      "wins": 3,
       "losses": 3,
-      "total_pnl": -15.1135,
-      "average_pnl": -3.0227,
-      "win_rate": 40.0,
-      "trust_score": 45,
-      "rank": "WEAK",
+      "total_pnl": -13.4662,
+      "average_pnl": -2.2444,
+      "win_rate": 50.0,
+      "trust_score": 62,
+      "rank": "NEUTRAL",
       "first_seen": "2026-06-30T05:02:56.293593",
-      "last_seen": "2026-06-30T05:24:21.516021",
+      "last_seen": "2026-06-30T13:53:54.876987",
       "notes": [],
       "tokens_seen": [
         "DbqbFSSBEDaX9F6hnySDHKmKSE9PU1KTyJ7jwcd3xViS"
@@ -431,14 +431,48 @@
       "pnl_usd": 6.8248,
       "rank": "WEAK",
       "trust_score": 45
+    },
+    {
+      "timestamp": "2026-06-30T13:53:54.876943",
+      "event": "WALLET_OUTCOME_LEARNED",
+      "wallet": "VLXFRyxhAndY21gS4ys6ZWyJKHeP9DQgoqHhq3ARs2H",
+      "token_address": "DbqbFSSBEDaX9F6hnySDHKmKSE9PU1KTyJ7jwcd3xViS",
+      "coin_name": "trenchies",
+      "trade_id": "1018",
+      "pnl_usd": 1.6473,
+      "rank": "NEUTRAL",
+      "trust_score": 62
+    },
+    {
+      "timestamp": "2026-06-30T13:53:54.876975",
+      "event": "WALLET_OUTCOME_LEARNED",
+      "wallet": "ENY9JreWWWtq8jSKfLtXpzjBteknLPdahPCwG7ZCVbJe",
+      "token_address": "DbqbFSSBEDaX9F6hnySDHKmKSE9PU1KTyJ7jwcd3xViS",
+      "coin_name": "trenchies",
+      "trade_id": "1018",
+      "pnl_usd": 1.6473,
+      "rank": "NEUTRAL",
+      "trust_score": 62
+    },
+    {
+      "timestamp": "2026-06-30T13:53:54.876996",
+      "event": "WALLET_OUTCOME_LEARNED",
+      "wallet": "R32xAccFis3YzBzGwZ1C4QkGiehLxSao7gDmErA3kjk",
+      "token_address": "DbqbFSSBEDaX9F6hnySDHKmKSE9PU1KTyJ7jwcd3xViS",
+      "coin_name": "trenchies",
+      "trade_id": "1018",
+      "pnl_usd": 1.6473,
+      "rank": "NEUTRAL",
+      "trust_score": 62
     }
   ],
-  "last_updated": "2026-06-30T05:28:14.815109",
+  "last_updated": "2026-06-30T13:56:53.800073",
   "learned_trade_ids": [
-    "991",
-    "950",
+    "1018",
+    "943",
     "968",
-    "986",
-    "943"
+    "950",
+    "991",
+    "986"
   ]
 }
