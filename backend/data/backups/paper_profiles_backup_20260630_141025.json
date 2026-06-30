@@ -1,0 +1,82 @@
+{
+  "active_profile": "Main",
+  "profiles": {
+    "Main": {
+      "name": "Main",
+      "cash": 10000.0,
+      "open_trades": [],
+      "closed_trades": [],
+      "settings": {
+        "starting_cash": 10000.0,
+        "trade_size": 100.0,
+        "risk_mode": "NORMAL",
+        "memory_preserved": true,
+        "created_at": "2026-06-30T14:10:25.660181",
+        "updated_at": "2026-06-30T14:10:25.660191"
+      }
+    },
+    "$50 Challenge": {
+      "name": "$50 Challenge",
+      "cash": 50.0,
+      "open_trades": [],
+      "closed_trades": [],
+      "settings": {
+        "starting_cash": 50.0,
+        "trade_size": 5.0,
+        "risk_mode": "SMALL_ACCOUNT",
+        "memory_preserved": true,
+        "created_at": "2026-06-30T14:10:25.660194",
+        "updated_at": "2026-06-30T14:10:25.660195"
+      }
+    },
+    "$10 Challenge": {
+      "name": "$10 Challenge",
+      "cash": 10.0,
+      "open_trades": [],
+      "closed_trades": [],
+      "settings": {
+        "starting_cash": 10.0,
+        "trade_size": 1.0,
+        "risk_mode": "TINY_ACCOUNT",
+        "memory_preserved": true,
+        "created_at": "2026-06-30T14:10:25.660198",
+        "updated_at": "2026-06-30T14:10:25.660199"
+      }
+    },
+    "High Risk": {
+      "name": "High Risk",
+      "cash": 1000.0,
+      "open_trades": [],
+      "closed_trades": [],
+      "settings": {
+        "starting_cash": 1000.0,
+        "trade_size": 100.0,
+        "risk_mode": "HIGH_RISK",
+        "memory_preserved": true,
+        "created_at": "2026-06-30T14:10:25.660200",
+        "updated_at": "2026-06-30T14:10:25.660201"
+      }
+    },
+    "Conservative": {
+      "name": "Conservative",
+      "cash": 10000.0,
+      "open_trades": [],
+      "closed_trades": [],
+      "settings": {
+        "starting_cash": 10000.0,
+        "trade_size": 50.0,
+        "risk_mode": "CONSERVATIVE",
+        "memory_preserved": true,
+        "created_at": "2026-06-30T14:10:25.660203",
+        "updated_at": "2026-06-30T14:10:25.660204"
+      }
+    }
+  },
+  "shared": {
+    "alpha_brain_shared": true,
+    "learning_memory_shared": true,
+    "wallet_memory_shared": true,
+    "created_at": "2026-06-30T14:10:25.660206",
+    "updated_at": "2026-06-30T14:10:25.660207"
+  }
+}

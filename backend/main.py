@@ -14,6 +14,11 @@ from core.paper_trader import (
     review_paper_trade,
     reset_paper_account,
     set_paper_trade_size,
+    get_all_paper_profiles,
+    select_paper_profile,
+    create_paper_profile,
+    clone_paper_profile,
+    delete_paper_profile,
 )
 from core.performance import get_performance
 from core.price_audit import read_recent_price_events
@@ -159,6 +164,41 @@ def discover():
     return {"count": len(coins), "coins": coins}
 
 
+@app.get("/profiles")
+def profiles():
+    return get_all_paper_profiles()
+
+
+@app.post("/profiles/select")
+def profiles_select(settings: dict):
+    name = settings.get("name") or settings.get("profile") or settings.get("active_profile")
+    return select_paper_profile(name)
+
+
+@app.post("/profiles/create")
+def profiles_create(settings: dict):
+    return create_paper_profile(
+        name=settings.get("name"),
+        starting_cash=settings.get("starting_cash", 10000),
+        trade_size=settings.get("trade_size", 100),
+        risk_mode=settings.get("risk_mode", "NORMAL"),
+    )
+
+
+@app.post("/profiles/clone")
+def profiles_clone(settings: dict):
+    return clone_paper_profile(
+        source_name=settings.get("source_name"),
+        new_name=settings.get("new_name"),
+    )
+
+
+@app.post("/profiles/delete")
+def profiles_delete(settings: dict):
+    name = settings.get("name") or settings.get("profile")
+    return delete_paper_profile(name)
+
+
 @app.post("/paper/trade")
 def paper_trade(signal: dict):
     signal = apply_wallet_intelligence_to_signal(signal, signal)
@@ -195,11 +235,14 @@ def paper_trade_size(settings: dict):
 @app.get("/paper/state")
 def paper_state_endpoint():
     state = get_paper_state()
+    profiles_data = get_all_paper_profiles()
 
     open_trades = state.get("open_trades", [])
     closed_trades = state.get("closed_trades", [])
 
     return {
+        "active_profile": profiles_data.get("active_profile"),
+        "profiles": profiles_data.get("profiles", []),
         "cash": state.get("cash", 10000),
         "settings": state.get("settings", {}),
         "open_trades": [slim_trade(t) for t in open_trades[-50:]],
@@ -212,7 +255,14 @@ def paper_state_endpoint():
 
 @app.get("/paper/performance")
 def paper_performance_endpoint():
-    return get_performance()
+    performance = get_performance()
+    profiles_data = get_all_paper_profiles()
+
+    if isinstance(performance, dict):
+        performance["active_profile"] = profiles_data.get("active_profile")
+        performance["profiles"] = profiles_data.get("profiles", [])
+
+    return performance
 
 
 @app.post("/paper/update")
