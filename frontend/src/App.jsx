@@ -59,7 +59,16 @@ function formatMoney(value) {
 
 function formatSmall(value) {
   if (value === undefined || value === null) return "—";
-  return `$${Number(value).toFixed(6)}`;
+  return `$${Number(value).toFixed(8)}`;
+}
+
+function formatPercent(value) {
+  if (value === undefined || value === null) return "0%";
+  return `${Number(value).toFixed(1)}%`;
+}
+
+function getPnlClass(value) {
+  return Number(value || 0) >= 0 ? "green" : "red";
 }
 
 function PlaceholderPage({ title, subtitle, items }) {
@@ -99,6 +108,7 @@ function App() {
   const [paperState, setPaperState] = useState(null);
   const [learningState, setLearningState] = useState(null);
   const [engineState, setEngineState] = useState(null);
+  const [systemHealth, setSystemHealth] = useState(null);
 
   async function loadMemory() {
     setIsLoadingMemory(true);
@@ -134,7 +144,15 @@ function App() {
     } catch (error) {
       console.error("Paper trader load failed:", error);
     }
+  }async function loadSystemHealth() {
+  try {
+    const response = await fetch(`${API}/system/health`);
+    const data = await response.json();
+    setSystemHealth(data);
+  } catch (error) {
+    console.error("System health load failed:", error);
   }
+}
 
   async function startAlphaEngine() {
     try {
@@ -153,6 +171,38 @@ function App() {
     } catch (error) {
       console.error("Engine stop failed:", error);
       alert("Could not stop Alpha Engine.");
+    }
+  }
+
+  async function reviewTrade(tradeId) {
+    try {
+      const response = await fetch(`${API}/paper/trade/${tradeId}/review`, {
+        method: "POST",
+      });
+
+      const data = await response.json();
+      console.log("REVIEW RESPONSE:", data);
+
+      await loadPaperTrader();
+    } catch (error) {
+      console.error("Review failed:", error);
+      alert("Review failed. Check backend terminal.");
+    }
+  }
+
+  async function sellTrade(tradeId) {
+    try {
+      const response = await fetch(`${API}/paper/trade/${tradeId}/sell`, {
+        method: "POST",
+      });
+
+      const data = await response.json();
+      console.log("SELL RESPONSE:", data);
+
+      await loadPaperTrader();
+    } catch (error) {
+      console.error("Sell failed:", error);
+      alert("Sell failed. Check backend terminal.");
     }
   }
 
@@ -185,15 +235,17 @@ function App() {
   }
 
   useEffect(() => {
-    loadMemory();
+  loadMemory();
+  loadPaperTrader();
+  loadSystemHealth();
+
+  const timer = setInterval(() => {
     loadPaperTrader();
+    loadSystemHealth();
+  }, 1000);
 
-    const timer = setInterval(() => {
-      loadPaperTrader();
-    }, 3000);
-
-    return () => clearInterval(timer);
-  }, []);
+  return () => clearInterval(timer);
+}, []);
 
   useEffect(() => {
     if (!autoRefresh) return;
@@ -277,34 +329,93 @@ function App() {
       const openTrades = state.open_trades || [];
       const closedTrades = state.closed_trades || [];
 
-      return (
-        <main className="single-page">
-          <section className="panel placeholder-page">
-            <div className="section-header">
-              <div>
-                <h2>Alpha Paper Trader</h2>
-                <p>Fully automated paper trading and learning system.</p>
-              </div>
+      function tradeName(trade) {
+        return trade?.symbol || trade?.coin_name || "UNKNOWN";
+      }
 
-              <div className="header-actions">
-                <button onClick={startAlphaEngine}>Start Engine</button>
-                <button onClick={stopAlphaEngine}>Stop Engine</button>
-              </div>
+      function tradeSubtitle(trade) {
+        return trade?.coin_name || "Alpha paper trade";
+      }
+
+      function tradeValue(trade) {
+        const entry = Number(trade?.entry_price || 0);
+        const qty = Number(trade?.quantity || 0);
+        const current = Number(trade?.current_price || entry);
+        return qty * current;
+      }
+
+      function tradePnlClass(trade) {
+        return Number(trade?.pnl_usd || 0) >= 0 ? "green" : "red";
+      }
+
+      function alphaReason(trade) {
+        return `Alpha bought because Edge ${trade?.score ?? 0}, Probability ${
+          trade?.probability ?? 0
+        }%, Risk ${trade?.risk_score ?? 0}. ${trade?.reason || ""}`;
+      }
+
+      return (
+        <main className="alpha-trader-mobile">
+          <section className="trader-top-card">
+            <div>
+              <h1>Alpha Trader</h1>
+              <p>AI paper trading command center</p>
             </div>
 
-            <div className="modal-grid">
+            <div className="engine-pill">
+              <span className={engine.running ? "green" : "red"}>
+                ● {engine.running ? "RUNNING" : "STOPPED"}
+              </span>
+            </div>
+          </section>
+
+          <section className="trader-performance-card">
+            <div className="section-title">
+              <span></span>
+              <h2>Performance</h2>
+            </div>
+
+            <div className="performance-grid">
               <div>
-                <span>Engine</span>
-                <strong className={engine.running ? "green" : "red"}>
-                  {engine.running ? "RUNNING" : "STOPPED"}
+                <span>Win rate</span>
+                <strong>{perf.win_rate ?? 0}%</strong>
+              </div>
+              <div>
+                <span>Closed P&L</span>
+                <strong className={getPnlClass(perf.total_pnl)}>
+                  {formatMoney(perf.total_pnl ?? 0)}
                 </strong>
               </div>
               <div>
-                <span>Cycles</span>
-                <strong>{engine.cycles ?? 0}</strong>
+                <span>Open positions</span>
+                <strong>{perf.open_trades ?? openTrades.length}</strong>
               </div>
               <div>
-                <span>Cash</span>
+                <span>Closed trades</span>
+                <strong>{perf.closed_trades ?? closedTrades.length}</strong>
+              </div>
+            </div>
+
+            <div className="engine-buttons">
+              <button onClick={startAlphaEngine}>Start Engine</button>
+              <button onClick={stopAlphaEngine}>Stop Engine</button>
+            </div>
+          </section>
+
+          <section className="trader-copilot-card">
+            <div className="section-title">
+              <span></span>
+              <h2>Alpha Copilot Status</h2>
+            </div>
+
+            <p>
+              Alpha scanned {engine.last_scan_count ?? 0} coins. New trades this cycle:{" "}
+              {engine.last_trades_created ?? 0}.
+            </p>
+
+            <div className="copilot-mini-grid">
+              <div>
+                <span>Cash left</span>
                 <strong>{formatMoney(perf.cash ?? 10000)}</strong>
               </div>
               <div>
@@ -312,77 +423,177 @@ function App() {
                 <strong>{formatMoney(perf.equity ?? 10000)}</strong>
               </div>
               <div>
-                <span>Open Trades</span>
-                <strong>{perf.open_trades ?? openTrades.length}</strong>
+                <span>Cycles</span>
+                <strong>{engine.cycles ?? 0}</strong>
               </div>
               <div>
-                <span>Closed Trades</span>
-                <strong>{perf.closed_trades ?? closedTrades.length}</strong>
-              </div>
-              <div>
-                <span>Win Rate</span>
-                <strong>{perf.win_rate ?? 0}%</strong>
-              </div>
-              <div>
-                <span>Total P&L</span>
-                <strong>{formatMoney(perf.total_pnl ?? 0)}</strong>
+                <span>Learned</span>
+                <strong>{learning.total_trades ?? 0}</strong>
               </div>
             </div>
+          </section>
 
-            <div className="placeholder-card">
-              <h3>Engine Status</h3>
-              <p>{engine.message || "Waiting for Alpha Engine..."}</p>
-              <p>Last Scan Count: {engine.last_scan_count ?? 0}</p>
-              <p>Last Trades Created: {engine.last_trades_created ?? 0}</p>
-            </div>
+          <section className="section-title floating-title">
+            <span></span>
+            <h2>Open Positions</h2>
+          </section>
 
-            <div className="placeholder-card">
-              <h3>Open Positions</h3>
+          {openTrades.length === 0 ? (
+            <section className="empty-trader-card">
+              <h2>No open trades</h2>
+              <p>Start Alpha Engine and let it scan for opportunities.</p>
+            </section>
+          ) : (
+            <section className="position-stack">
+              {openTrades.map((trade) => (
+                <article className="position-card" key={trade.id}>
+                  <div className="position-header">
+                    <div className="position-left">
+                      <div className="trade-avatar">🤖</div>
+                      <div>
+                        <h2>{tradeName(trade)}</h2>
+                        <p>{tradeSubtitle(trade)}</p>
+                        <div className="pill-row">
+                          <span>Edge {trade.score ?? 0}</span>
+                          <span>Prob {trade.probability ?? 0}%</span>
+                        </div>
+                      </div>
+                    </div>
 
-              {openTrades.length === 0 ? (
-                <p>No open trades yet. Click Start Engine and let Alpha scan.</p>
-              ) : (
-                openTrades.map((trade) => (
-                  <div className="trade-row" key={trade.id}>
-                    <strong>{trade.symbol || trade.coin_name}</strong>
-                    <span>Entry: {formatSmall(trade.entry_price)}</span>
-                    <span>Now: {formatSmall(trade.current_price)}</span>
-                    <span className={trade.pnl_usd >= 0 ? "green" : "red"}>
-                      {formatMoney(trade.pnl_usd)} / {trade.pnl_percent}%
-                    </span>
-                    <span>{trade.status}</span>
+                    <div className="position-pnl">
+                      <span>P&L</span>
+                      <strong className={tradePnlClass(trade)}>
+                        {formatPercent(trade.pnl_percent)}
+                      </strong>
+                      <p className={tradePnlClass(trade)}>
+                        {formatMoney(trade.pnl_usd ?? 0)}
+                      </p>
+                    </div>
                   </div>
-                ))
-              )}
-            </div>
 
-            <div className="placeholder-card">
-              <h3>Closed Trades</h3>
-
-              {closedTrades.length === 0 ? (
-                <p>No closed trades yet. Alpha has not hit TP or SL yet.</p>
-              ) : (
-                closedTrades.slice(-10).reverse().map((trade) => (
-                  <div className="trade-row" key={trade.id}>
-                    <strong>{trade.symbol || trade.coin_name}</strong>
-                    <span>Entry: {formatSmall(trade.entry_price)}</span>
-                    <span>Exit: {formatSmall(trade.current_price)}</span>
-                    <span className={trade.pnl_usd >= 0 ? "green" : "red"}>
-                      {formatMoney(trade.pnl_usd)} / {trade.pnl_percent}%
-                    </span>
-                    <span>{trade.status}</span>
+                  <div className="trade-stat-grid">
+                    <div>
+                      <span>Invested</span>
+                      <strong>{formatMoney(trade.size_usd ?? 0)}</strong>
+                    </div>
+                    <div>
+                      <span>Value</span>
+                      <strong>{formatMoney(tradeValue(trade))}</strong>
+                    </div>
+                    <div>
+                      <span>Size</span>
+                      <strong>{trade.quantity ? "Active" : "—"}</strong>
+                    </div>
                   </div>
-                ))
-              )}
-            </div>
 
-            <div className="placeholder-card">
-              <h3>Learning Engine</h3>
-              <p>Total Trades Learned: {learning.total_trades ?? 0}</p>
-              <p>Wins: {learning.wins ?? 0}</p>
-              <p>Losses: {learning.losses ?? 0}</p>
-              <pre>{JSON.stringify(learning.score_buckets || {}, null, 2)}</pre>
-            </div>
+                  <div className="reason-box">{alphaReason(trade)}</div>
+
+                  <div className="monitoring-box">
+                    <h2>🟡 Alpha still monitoring</h2>
+                    <p>
+                      Alpha is watching the trade. It will close automatically if TP or SL is reached.
+                    </p>
+
+                    <div className="levels-grid">
+                      <div>
+                        <span>Entry</span>
+                        <strong>{formatSmall(trade.entry_price)}</strong>
+                      </div>
+                      <div>
+                        <span>Current</span>
+                        <strong>{formatSmall(trade.current_price)}</strong>
+                      </div>
+                      <div>
+                        <span>Stop</span>
+                        <strong className="red">{formatSmall(trade.stop_loss)}</strong>
+                      </div>
+                      <div>
+                        <span>Take Profit</span>
+                        <strong className="green">{formatSmall(trade.take_profit)}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="caution-box">
+                    <h2>🧠 Alpha Review</h2>
+                    <p>{trade.review || "Click Review and Alpha will rethink this trade."}</p>
+
+                    <div className="review-grid">
+                      <div>
+                        <span>Recommendation</span>
+                        <strong>{trade.recommendation || "WAIT"}</strong>
+                      </div>
+                      <div>
+                        <span>Prob</span>
+                        <strong>{trade.probability ?? 0}%</strong>
+                      </div>
+                      <div>
+                        <span>Risk</span>
+                        <strong>{trade.risk_score ?? 0}</strong>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="trade-action-grid">
+                    <button onClick={loadPaperTrader}>↻ Update</button>
+
+                    <button
+                      className="purple-btn"
+                      onClick={() => reviewTrade(trade.id)}
+                    >
+                      🧠 Review
+                    </button>
+
+                    <button
+                      className="green-btn"
+                      onClick={() => {
+                        alert("Execute Plan is next. Alpha will move stops, trail winners, and take partial profits.");
+                      }}
+                    >
+                      ⚡ Execute Plan
+                    </button>
+
+                    <button
+                      className="red-btn"
+                      onClick={() => sellTrade(trade.id)}
+                    >
+                      Sell
+                    </button>
+                  </div>
+                </article>
+              ))}
+            </section>
+          )}
+
+          <section className="section-title floating-title">
+            <span></span>
+            <h2>Recent Trades</h2>
+          </section>
+
+          <section className="recent-trades-card">
+            {closedTrades.length === 0 ? (
+              <p>No closed trades yet.</p>
+            ) : (
+              closedTrades.slice(-8).reverse().map((trade) => (
+                <div className="recent-trade-row" key={trade.id}>
+                  <div className="check-icon">✓</div>
+
+                  <div>
+                    <strong>{tradeName(trade)}</strong>
+                    <span>{trade.closed_at || trade.opened_at}</span>
+                  </div>
+
+                  <div className="recent-pnl">
+                    <strong className={tradePnlClass(trade)}>
+                      {formatPercent(trade.pnl_percent)}
+                    </strong>
+                    <span className={tradePnlClass(trade)}>
+                      {formatMoney(trade.pnl_usd ?? 0)}
+                    </span>
+                  </div>
+                </div>
+              ))
+            )}
           </section>
         </main>
       );
@@ -403,18 +614,197 @@ function App() {
     }
 
     if (currentPage === "Alpha Brain") {
-      return (
-        <PlaceholderPage
-          title="Alpha Brain"
-          subtitle="Alpha's reasoning, memory, and learning center."
-          items={[
-            { title: "Memory", text: "Alpha remembers every scan and trade." },
-            { title: "Learning Engine", text: "Finds which patterns win or rug." },
-            { title: "Reasoning", text: "Explains why Alpha likes or rejects a coin." },
-          ]}
-        />
-      );
-    }
+  const health = systemHealth || {};
+  const accounting = health.accounting || {};
+  const warnings = health.warnings || [];
+  const safe = health.status === "SAFE";
+  const brain = health.brain || {};
+const learning = health.learning || {};
+
+  return (
+    <main className="alpha-brain-page">
+      <section className={`brain-hero ${safe ? "safe" : "warning"}`}>
+        <div>
+          <p className="eyebrow">Alpha Brain</p>
+          <h1>{safe ? "🟢 Alpha Safe" : "🟡 Alpha Warning"}</h1>
+          <p>
+            {safe
+              ? "All core systems are balanced and reporting normally."
+              : "Alpha found warnings that need review."}
+          </p>
+        </div>
+
+        <div className="brain-score-orb">
+          <span>{safe ? "SAFE" : "CHECK"}</span>
+        </div>
+      </section>
+
+      <section className="brain-grid">
+        <div className="brain-card">
+          <span>Backend</span>
+          <strong>{health.backend_online ? "Online" : "Offline"}</strong>
+          <p>Core API status</p>
+        </div>
+
+        <div className="brain-card">
+          <span>Paper Memory</span>
+          <strong>{health.paper_state_file?.exists ? "Saved" : "Missing"}</strong>
+          <p>Trades survive restart</p>
+        </div>
+
+        <div className="brain-card">
+          <span>Learning Memory</span>
+          <strong>{health.saved_learning?.has_learning ? "Saved" : "Missing"}</strong>
+          <p>{health.saved_learning?.saved_at || "No save yet"}</p>
+        </div>
+
+        <div className="brain-card">
+          <span>Price Audit</span>
+          <strong>{health.price_audit_file?.exists ? "Active" : "Missing"}</strong>
+          <p>
+            Last update:{" "}
+            {health.last_price_update_age_seconds == null
+              ? "none"
+              : `${health.last_price_update_age_seconds}s ago`}
+          </p>
+        </div>
+      </section>
+
+      <section className="brain-accounting-card">
+        <div className="section-title">
+          <span></span>
+          <h2>Accounting Audit</h2>
+        </div>
+
+        <div className="accounting-formula">
+          <strong>{formatMoney(accounting.cash || 0)}</strong>
+          <span>+</span>
+          <strong>{formatMoney(accounting.open_value || 0)}</strong>
+          <span>=</span>
+          <strong>{formatMoney(accounting.equity || 0)}</strong>
+        </div>
+
+        <p>Cash + Open Position Value = Total Equity</p>
+
+        <div className="brain-grid compact">
+          <div className="brain-card">
+            <span>Total P&L</span>
+            <strong className={getPnlClass(accounting.total_pnl)}>
+              {formatMoney(accounting.total_pnl || 0)}
+            </strong>
+          </div>
+
+          <div className="brain-card">
+            <span>Closed P&L</span>
+            <strong className={getPnlClass(accounting.closed_pnl)}>
+              {formatMoney(accounting.closed_pnl || 0)}
+            </strong>
+          </div>
+
+          <div className="brain-card">
+            <span>Open Trades</span>
+            <strong>{accounting.open_trades || 0}</strong>
+          </div>
+
+          <div className="brain-card">
+            <span>Closed Trades</span>
+            <strong>{accounting.closed_trades || 0}</strong>
+          </div>
+        </div>
+      </section>
+<section className="brain-accounting-card">
+  <div className="section-title">
+    <span></span>
+    <h2>Alpha Mind</h2>
+  </div>
+
+  <div className="brain-grid compact">
+    <div className="brain-card">
+      <span>Mood</span>
+      <strong>{brain.mood || "Loading"}</strong>
+    </div>
+
+    <div className="brain-card">
+      <span>Confidence</span>
+      <strong>{brain.confidence ?? 0}%</strong>
+    </div>
+
+    <div className="brain-card">
+      <span>Strategy</span>
+      <strong>{brain.strategy_mode || "Unknown"}</strong>
+    </div>
+
+    <div className="brain-card">
+      <span>Wallet AI</span>
+      <strong>{brain.wallet_ai || "STANDBY"}</strong>
+    </div>
+  </div>
+
+  <div className="alpha-thought-box">
+    <span>Alpha Thought</span>
+    <p>{brain.thought || "Waiting for health data..."}</p>
+  </div>
+
+  <div className="learning-bars">
+    {(brain.learning_bars || []).map((bar) => (
+      <div className="learning-bar-row" key={bar.name}>
+        <div>
+          <span>{bar.name}</span>
+          <strong>{bar.value}%</strong>
+        </div>
+        <div className="learning-track">
+          <div
+            className="learning-fill"
+            style={{ width: `${bar.value}%` }}
+          ></div>
+        </div>
+      </div>
+    ))}
+  </div>
+
+  <div className="brain-grid compact">
+    <div className="brain-card">
+      <span>Learned Trades</span>
+      <strong>{learning.total_trades || 0}</strong>
+    </div>
+
+    <div className="brain-card">
+      <span>Win Rate</span>
+      <strong>{learning.win_rate || 0}%</strong>
+    </div>
+
+    <div className="brain-card">
+      <span>Engine Cycles</span>
+      <strong>{brain.cycles || 0}</strong>
+    </div>
+
+    <div className="brain-card">
+      <span>Last Scan</span>
+      <strong>{brain.last_scan_count || 0} coins</strong>
+    </div>
+  </div>
+</section>
+      <section className="brain-accounting-card">
+        <div className="section-title">
+          <span></span>
+          <h2>System Warnings</h2>
+        </div>
+
+        {warnings.length === 0 ? (
+          <div className="warning-good">✅ No warnings. Alpha systems are healthy.</div>
+        ) : (
+          <div className="warning-list">
+            {warnings.map((warning, index) => (
+              <div className="warning-item" key={index}>
+                ⚠️ {warning}
+              </div>
+            ))}
+          </div>
+        )}
+      </section>
+    </main>
+  );
+}
 
     if (currentPage === "Settings") {
       return (
