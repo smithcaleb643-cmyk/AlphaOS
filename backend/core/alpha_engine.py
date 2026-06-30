@@ -4,8 +4,10 @@ from datetime import datetime
 
 from core.alpha_brain import score_coin
 from core.adaptive_learning import apply_learning_to_signal
-from core.paper_trader import create_paper_trade, get_paper_state
+from core.paper_trader import get_paper_state
 from core.trade_manager import update_open_trades
+from core.paper_broker import paper_broker
+from core.risk_manager import approve_trade
 from services.market_service import scan_live_market, get_market_summary
 
 
@@ -18,6 +20,7 @@ engine_state = {
     "running": False,
     "last_scan_count": 0,
     "last_trades_created": 0,
+    "last_trades_blocked": 0,
     "last_prices_updated": 0,
     "cycles": 0,
     "message": "Alpha Engine idle",
@@ -30,6 +33,7 @@ engine_state = {
     "rate_limit_events": 0,
     "price_refresh_seconds": PRICE_REFRESH_SECONDS,
     "discovery_scan_seconds": DISCOVERY_SCAN_SECONDS,
+    "last_blocked_reasons": [],
 }
 
 price_cache = {}
@@ -80,6 +84,7 @@ def unique_open_trade_tokens():
         token = trade.get("token_address")
         if not token or token in seen:
             continue
+
         seen.add(token)
         tokens.append(token)
 
@@ -152,6 +157,18 @@ def start_discovery_cooldown(reason="rate limit"):
     engine_state["message"] = f"Discovery paused for {RATE_LIMIT_COOLDOWN_SECONDS}s because of {reason}."
 
 
+def rank_opportunities(opportunities):
+    return sorted(
+        opportunities,
+        key=lambda item: (
+            float(item.get("score") or 0),
+            float(item.get("probability") or 0),
+            -float(item.get("risk_score") or 0),
+        ),
+        reverse=True,
+    )
+
+
 def run_discovery_scan():
     if discovery_is_in_cooldown():
         return {"coins": [], "trades_created": 0, "skipped": True, "reason": "cooldown"}
@@ -166,8 +183,10 @@ def run_discovery_scan():
         raise
 
     scanner_price_lookup = {}
-    trades_created = 0
     opportunities = []
+    trades_created = 0
+    trades_blocked = 0
+    blocked_reasons = []
 
     for coin in coins:
         token = coin.get("token_address")
@@ -192,36 +211,61 @@ def run_discovery_scan():
             }
         )
 
-    opportunities = sorted(
-        opportunities,
-        key=lambda item: (
-            float(item.get("score") or 0),
-            float(item.get("probability") or 0),
-            -float(item.get("risk_score") or 0),
-        ),
-        reverse=True,
-    )
+    ranked = rank_opportunities(opportunities)
 
-    for opportunity in opportunities:
-        score = float(opportunity.get("score") or 0)
+    for opportunity in ranked:
+        state = get_paper_state()
+        approval = approve_trade(opportunity, state)
 
-        if score < 15:
+        opportunity["risk_approval"] = approval
+
+        if not approval.get("approved"):
+            trades_blocked += 1
+
+            if len(blocked_reasons) < 10:
+                blocked_reasons.append(
+                    {
+                        "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
+                        "score": opportunity.get("score"),
+                        "reason": approval.get("reason"),
+                    }
+                )
+
             continue
 
-        trade = create_paper_trade(opportunity)
+        response = paper_broker.buy(opportunity)
 
-        if trade:
+        if response.get("ok"):
             trades_created += 1
+        else:
+            trades_blocked += 1
+
+            if len(blocked_reasons) < 10:
+                blocked_reasons.append(
+                    {
+                        "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
+                        "score": opportunity.get("score"),
+                        "reason": response.get("message"),
+                    }
+                )
 
     if scanner_price_lookup:
         update_open_trades(scanner_price_lookup)
 
     engine_state["last_scan_count"] = len(coins)
     engine_state["last_trades_created"] = trades_created
+    engine_state["last_trades_blocked"] = trades_blocked
+    engine_state["last_blocked_reasons"] = blocked_reasons
     engine_state["last_discovery_scan_at"] = now_iso()
     engine_state["message"] = "Alpha Engine running"
 
-    return {"coins": coins, "trades_created": trades_created, "skipped": False, "reason": None}
+    return {
+        "coins": coins,
+        "trades_created": trades_created,
+        "trades_blocked": trades_blocked,
+        "skipped": False,
+        "reason": None,
+    }
 
 
 def update_scheduler_state(last_price_refresh, last_discovery_scan):
