@@ -1,7 +1,5 @@
 from core.paper_trader import get_paper_state
 
-STARTING_BALANCE = 10000
-
 
 def trade_remaining_value(trade):
     qty = float(trade.get("quantity") or 0)
@@ -27,6 +25,9 @@ def closed_trade_pnl(trade):
 def run_accounting_audit():
     state = get_paper_state()
 
+    settings = state.get("settings", {})
+    starting_balance = float(settings.get("starting_cash") or 10000)
+
     cash = float(state.get("cash") or 0)
     open_trades = state.get("open_trades", [])
     closed_trades = state.get("closed_trades", [])
@@ -37,10 +38,10 @@ def run_accounting_audit():
     closed_pnl = sum(closed_trade_pnl(t) for t in closed_trades)
 
     equity = cash + open_value
-    total_pnl = equity - STARTING_BALANCE
+    total_pnl = equity - starting_balance
 
     audit = {
-        "starting_balance": STARTING_BALANCE,
+        "starting_balance": round(starting_balance, 2),
         "cash": round(cash, 2),
         "open_value": round(open_value, 2),
         "equity": round(equity, 2),
