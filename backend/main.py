@@ -5,6 +5,17 @@ from core.accounting_auditor import run_accounting_audit
 from core.alpha_wallet_manager import get_alpha_wallet_status
 from core.live_decision_report import build_live_decision_report
 from core.adaptive_learning import apply_learning_to_signal
+from core.live_transaction_signer import sign_swap_transaction
+from core.live_transaction_sender import send_signed_transaction
+from core.live_trade_executor import execute_live_buy
+from core.live_trade_journal import load_live_trade_journal
+from core.live_portfolio import get_live_portfolio
+from core.live_alpha_controller import (
+    get_live_alpha_state,
+    start_live_alpha,
+    stop_live_alpha,
+    update_live_alpha_settings,
+)
 from core.alpha_brain import score_coin
 from core.alpha_engine import start_alpha_engine, stop_alpha_engine, get_alpha_engine_state
 from core.jupiter_service import quote_sol_to_token
@@ -348,9 +359,39 @@ def live_wallet_status_endpoint():
         }
 
 
+@app.get("/live/alpha/state")
+def live_alpha_state_endpoint():
+    return get_live_alpha_state()
+
+
+@app.post("/live/alpha/start")
+def live_alpha_start_endpoint():
+    return start_live_alpha()
+
+
+@app.post("/live/alpha/stop")
+def live_alpha_stop_endpoint():
+    return stop_live_alpha()
+
+
+@app.post("/live/alpha/settings")
+def live_alpha_settings_endpoint(payload: dict):
+    return update_live_alpha_settings(payload)
+
+
 @app.get("/live/alpha-wallet/status")
 def live_alpha_wallet_status():
     return get_alpha_wallet_status()
+
+
+@app.get("/live/portfolio")
+def live_portfolio():
+    return get_live_portfolio()
+
+
+@app.get("/live/trade-journal")
+def live_trade_journal():
+    return load_live_trade_journal()
 
 
 @app.post("/live/decision/report")
@@ -365,16 +406,9 @@ def live_jupiter_quote(payload: dict):
     slippage_bps = payload.get("slippage_bps", 100)
 
     if not output_mint:
-        return {
-            "ok": False,
-            "error": "output_mint is required",
-        }
+        return {"ok": False, "error": "output_mint is required"}
 
-    return quote_sol_to_token(
-        output_mint=output_mint,
-        sol_amount=sol_amount,
-        slippage_bps=slippage_bps,
-    )
+    return quote_sol_to_token(output_mint, sol_amount, slippage_bps)
 
 
 @app.post("/live/jupiter/build-swap")
@@ -384,13 +418,11 @@ def live_jupiter_build_swap(payload: dict):
     slippage_bps = payload.get("slippage_bps", 100)
 
     if not output_mint:
-        return {
-            "ok": False,
-            "error": "output_mint is required",
-        }
+        return {"ok": False, "error": "output_mint is required"}
 
-    return build_swap_transaction(
-        output_mint=output_mint,
-        sol_amount=sol_amount,
-        slippage_bps=slippage_bps,
-    )
+    return build_swap_transaction(output_mint, sol_amount, slippage_bps)
+
+
+@app.post("/live/execute/buy")
+def live_execute_buy_endpoint(payload: dict):
+    return execute_live_buy(payload)
