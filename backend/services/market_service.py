@@ -1,23 +1,9 @@
 import requests
 
+from core.price_audit import log_price_event
+
 DEX_TOKEN_PAIRS = "https://api.dexscreener.com/token-pairs/v1/solana"
 DEX_PROFILES = "https://api.dexscreener.com/token-profiles/latest/v1"
-
-
-def get_token_pairs(token_address):
-    response = requests.get(f"{DEX_TOKEN_PAIRS}/{token_address}", timeout=10)
-    response.raise_for_status()
-    return response.json()
-
-
-def get_market_summary(token_address):
-    pairs = get_token_pairs(token_address)
-
-    if not pairs:
-        return {"found": False, "message": "No pairs found"}
-
-    best_pair = pairs[0]
-    return normalize_pair(best_pair)
 
 
 def safe_float(value):
@@ -25,6 +11,12 @@ def safe_float(value):
         return float(value or 0)
     except (TypeError, ValueError):
         return 0
+
+
+def get_token_pairs(token_address):
+    response = requests.get(f"{DEX_TOKEN_PAIRS}/{token_address}", timeout=10)
+    response.raise_for_status()
+    return response.json()
 
 
 def normalize_pair(pair):
@@ -65,6 +57,36 @@ def normalize_pair(pair):
     }
 
 
+def audit_market_summary(summary, source="market_summary"):
+    try:
+        if summary.get("found"):
+            log_price_event({
+                "source": source,
+                "token_address": summary.get("token_address"),
+                "symbol": summary.get("symbol"),
+                "price_usd": summary.get("price_usd"),
+                "liquidity_usd": (summary.get("liquidity") or {}).get("usd", 0),
+                "volume_h24": (summary.get("volume") or {}).get("h24", 0),
+                "market_cap": summary.get("market_cap"),
+                "dex": summary.get("dex"),
+                "pair_address": summary.get("pair_address"),
+            })
+    except Exception as error:
+        print("PRICE AUDIT LOG FAILED:", error)
+
+
+def get_market_summary(token_address):
+    pairs = get_token_pairs(token_address)
+
+    if not pairs:
+        return {"found": False, "message": "No pairs found"}
+
+    best_pair = pairs[0]
+    summary = normalize_pair(best_pair)
+    audit_market_summary(summary, source="get_market_summary")
+    return summary
+
+
 def discover_solana_tokens(limit=10):
     response = requests.get(DEX_PROFILES, timeout=10)
     response.raise_for_status()
@@ -93,8 +115,8 @@ def scan_live_market(limit=8):
                 continue
 
             best_pair = pairs[0]
-
             normalized = normalize_pair(best_pair)
+            audit_market_summary(normalized, source="scan_live_market")
 
             coin = {
                 "coin_name": normalized["coin_name"],

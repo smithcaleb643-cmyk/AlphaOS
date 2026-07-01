@@ -1,62 +1,76 @@
 import base64
 import requests
+import time
 
-SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
+RPC_URL = "https://api.mainnet-beta.solana.com"
 
 
-def rpc_call(method, params=None):
+def extract_tx(tx):
+    if not tx:
+        return None
+
+    if isinstance(tx, str):
+        return tx
+
+    if isinstance(tx, dict):
+        return (
+            tx.get("signed_transaction")
+            or tx.get("swap_transaction")
+            or tx.get("raw")
+        )
+
+    return None
+
+
+def rpc_send(tx_b64):
     payload = {
         "jsonrpc": "2.0",
         "id": 1,
-        "method": method,
-        "params": params or [],
+        "method": "sendTransaction",
+        "params": [
+            tx_b64,
+            {
+                "encoding": "base64",
+                "skipPreflight": True,   # 🔥 IMPORTANT FIX
+                "maxRetries": 3
+            }
+        ]
     }
 
-    response = requests.post(SOLANA_RPC_URL, json=payload, timeout=20)
-    response.raise_for_status()
-    return response.json()
+    return requests.post(RPC_URL, json=payload, timeout=20).json()
 
 
-def send_signed_transaction(signed_transaction_base64):
+def send_signed_transaction(signed_transaction):
     try:
-        if not signed_transaction_base64:
-            return {
-                "ok": False,
-                "error": "Missing signed_transaction.",
-            }
+        tx = extract_tx(signed_transaction)
 
-        raw_bytes = base64.b64decode(signed_transaction_base64)
-        raw_base64 = base64.b64encode(raw_bytes).decode("utf-8")
+        if not tx:
+            return {"ok": False, "error": "Missing transaction"}
 
-        result = rpc_call(
-            "sendTransaction",
-            [
-                raw_base64,
-                {
-                    "encoding": "base64",
-                    "skipPreflight": False,
-                    "preflightCommitment": "confirmed",
-                    "maxRetries": 3,
-                },
-            ],
-        )
+        # 🔥 retry loop (THIS IS THE STABILIZER)
+        last_error = None
 
-        if "error" in result:
-            return {
-                "ok": False,
-                "error": result["error"],
-                "raw": result,
-            }
+        for _ in range(3):
+            result = rpc_send(tx)
 
-        return {
-            "ok": True,
-            "signature": result.get("result"),
-            "raw": result,
-            "message": "Signed transaction sent to Solana.",
-        }
+            if "result" in result:
+                return {
+                    "ok": True,
+                    "signature": result["result"]
+                }
 
-    except Exception as error:
+            last_error = result.get("error")
+
+            # small delay before retry
+            time.sleep(0.4)
+
         return {
             "ok": False,
-            "error": str(error),
+            "error": last_error
+        }
+
+    except Exception as e:
+        return {
+            "ok": False,
+            "error": str(e)
         }

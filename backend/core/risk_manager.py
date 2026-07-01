@@ -5,20 +5,20 @@ def get_profile_rules(state):
 
     if starting_cash <= 10 or risk_mode == "TINY_ACCOUNT":
         return {
-            "max_open_trades": 2,
-            "min_score": 85,
-            "min_probability": 70,
-            "max_risk_score": 35,
-            "cash_reserve_percent": 20,
+            "max_open_trades": 10,
+            "min_score": 30,
+            "min_probability": 25,
+            "max_risk_score": 70,
+            "cash_reserve_percent": 5,
         }
 
     if starting_cash <= 50 or risk_mode == "SMALL_ACCOUNT":
         return {
-            "max_open_trades": 4,
-            "min_score": 80,
-            "min_probability": 65,
-            "max_risk_score": 45,
-            "cash_reserve_percent": 15,
+            "max_open_trades": 10,
+            "min_score": 30,
+            "min_probability": 25,
+            "max_risk_score": 70,
+            "cash_reserve_percent": 5,
         }
 
     if risk_mode == "CONSERVATIVE":

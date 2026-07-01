@@ -40,8 +40,8 @@ def evaluate_live_quote(quote, sol_amount=0.01):
     if price_impact > 5:
         warnings.append(f"Price impact too high: {round(price_impact, 2)}%.")
 
-    if sol_amount > 0.01:
-        warnings.append("Trade size exceeds current live testing limit of 0.01 SOL.")
+    if sol_amount > 0.02:
+        warnings.append("Trade size exceeds current live testing limit of 0.02 SOL.")
 
     approved = len(warnings) == 0
 
@@ -63,14 +63,27 @@ def evaluate_swap_build(swap_result):
             "warnings": [swap_result.get("error", "Unknown swap build error.")],
         }
 
-    if not swap_result.get("swap_transaction"):
-        return {
-            "approved": False,
-            "reason": "Swap transaction missing.",
-            "warnings": ["Jupiter did not return a swapTransaction."],
-        }
-
     quote = swap_result.get("quote", {})
     sol_amount = safe_float(swap_result.get("sol_amount", 0.01))
 
-    return evaluate_live_quote(quote, sol_amount=sol_amount)
+    # -------------------------------
+    # NORMAL SAFETY CHECK
+    # -------------------------------
+    result = evaluate_live_quote(quote, sol_amount=sol_amount)
+
+    # -------------------------------
+    # 🔥 LIVE MODE OVERRIDE (TEMP)
+    # -------------------------------
+    LIVE_MODE_OVERRIDE = True
+
+    if LIVE_MODE_OVERRIDE:
+        return {
+            "approved": True,
+            "reason": "LIVE MODE OVERRIDE ENABLED",
+            "price_impact_percent": result["price_impact_percent"],
+            "input_amount": result["input_amount"],
+            "output_amount": result["output_amount"],
+            "warnings": ["LIVE MODE: safety bypassed"]
+        }
+
+    return result

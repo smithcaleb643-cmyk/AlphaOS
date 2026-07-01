@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import LiveTradeJournalPanel from "./components/LiveTradeJournalPanel";
 import AlphaLiveChart from "./AlphaLiveChart";
 import LivePortfolioPanel from "./components/LivePortfolioPanel";
+import LiveAlphaControlPanel from "./components/LiveAlphaControlPanel";
 import LiveWalletCard from "./components/LiveWalletCard";
 import "./App.css";
 
@@ -117,6 +118,8 @@ const [liveWallet, setLiveWallet] = useState(null);
 
 const [livePortfolio, setLivePortfolio] = useState(null);
 
+const [liveAlpha, setLiveAlpha] = useState(null);
+
 const [liveJournal, setLiveJournal] = useState({
   count: 0,
   trades: [],
@@ -198,6 +201,16 @@ async function loadLivePortfolio() {
   }
 }
 
+async function loadLiveAlphaState() {
+  try {
+    const response = await fetch(`${API}/live/alpha/state`);
+    const data = await response.json();
+    setLiveAlpha(data);
+  } catch (error) {
+    console.error("Live Alpha state load failed:", error);
+  }
+}
+
 async function startAlphaEngine() {
   try {
     await fetch(`${API}/engine/start`, { method: "POST" });
@@ -205,6 +218,7 @@ async function startAlphaEngine() {
     await loadPaperTrader();
     await loadLiveWallet();
     await loadLivePortfolio();
+    await loadLiveAlphaState();
     await loadLiveTradeJournal();
 
   } catch (error) {
@@ -220,6 +234,7 @@ async function stopAlphaEngine() {
     await loadPaperTrader();
     await loadLiveWallet();
     await loadLivePortfolio();
+    await loadLiveAlphaState();
     await loadLiveTradeJournal();
 
   } catch (error) {
@@ -282,6 +297,7 @@ async function runScan() {
     await loadPaperTrader();
     await loadLiveWallet();
     await loadLivePortfolio();
+    await loadLiveAlphaState();
     await loadLiveTradeJournal();
 
   } catch (error) {
@@ -298,6 +314,7 @@ async function runScan() {
   loadSystemHealth();
   loadLiveWallet();
   loadLivePortfolio();
+  loadLiveAlphaState();
   loadLiveTradeJournal();
 
   const timer = setInterval(() => {
@@ -312,6 +329,7 @@ async function runScan() {
   const journalTimer = setInterval(() => {
     loadLiveTradeJournal();
     loadLivePortfolio();
+    loadLiveAlphaState();
   }, 3000);
 
   return () => {
@@ -743,6 +761,11 @@ const learning = health.learning || {};
           </p>
         </div>
       </section>
+
+      <LiveAlphaControlPanel
+        liveAlpha={liveAlpha}
+        onRefresh={loadLiveAlphaState}
+      />
 
       <LiveWalletCard liveWallet={liveWallet} />
 

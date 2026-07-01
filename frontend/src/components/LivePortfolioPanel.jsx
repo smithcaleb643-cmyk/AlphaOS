@@ -1,6 +1,6 @@
 export default function LivePortfolioPanel({ livePortfolio }) {
   const portfolio = livePortfolio || {};
-  const tokens = portfolio.tokens || [];
+  const positions = portfolio.positions || [];
 
   return (
     <section className="brain-accounting-card">
@@ -26,23 +26,81 @@ export default function LivePortfolioPanel({ livePortfolio }) {
         </div>
 
         <div className="brain-card">
-          <span>Today P&L</span>
-          <strong>${Number(portfolio.today_pnl_usd || 0).toFixed(2)}</strong>
+          <span>Today P&amp;L</span>
+          <strong>
+            ${Number(portfolio.today_pnl_usd || 0).toFixed(2)}
+          </strong>
         </div>
       </div>
 
-      {tokens.length === 0 ? (
+      {positions.length === 0 ? (
         <div className="alpha-thought-box" style={{ marginTop: "14px" }}>
-          <span>No tokens detected</span>
-          <p>Alpha will show live token positions here.</p>
+          <span>No positions</span>
+          <p>Alpha has no active trades.</p>
         </div>
       ) : (
-        <div style={{ display: "grid", gap: "10px", marginTop: "14px" }}>
-          {tokens.map((token, index) => (
-            <div className="brain-card" key={token.mint || index}>
-              <span>{token.symbol || token.mint || "Token"}</span>
-              <strong>{token.amount ?? token.balance ?? 0}</strong>
-              <p style={{ wordBreak: "break-all" }}>{token.mint}</p>
+        <div style={{ display: "grid", gap: "12px", marginTop: "14px" }}>
+          {positions.map((position, index) => (
+            <div className="brain-card" key={position.mint || index}>
+              <h3 style={{ marginBottom: 10 }}>
+                {position.symbol || "UNKNOWN"}
+              </h3>
+
+              <p>
+                <strong>Quantity:</strong>{" "}
+                {Number(position.quantity || 0).toFixed(2)}
+              </p>
+
+              <p>
+                <strong>Entry:</strong> $
+                {Number(position.entry_price || 0).toFixed(8)}
+              </p>
+
+              <p>
+                <strong>Current:</strong> $
+                {Number(position.current_price || 0).toFixed(8)}
+              </p>
+
+              <p>
+                <strong>Position Value:</strong> $
+                {Number(position.current_value_usd || 0).toFixed(4)}
+              </p>
+
+              <p>
+                <strong>P&amp;L:</strong>{" "}
+                <span
+                  style={{
+                    color:
+                      Number(position.pnl_percent || 0) >= 0
+                        ? "#22c55e"
+                        : "#ef4444",
+                  }}
+                >
+                  {Number(position.pnl_percent || 0).toFixed(2)}%
+                </span>
+              </p>
+
+              <p>
+                <strong>Score:</strong> {position.entry_score}
+              </p>
+
+              <p>
+                <strong>Probability:</strong> {position.probability}%
+              </p>
+
+              <p>
+                <strong>Risk:</strong> {position.risk_score}
+              </p>
+
+              <p
+                style={{
+                  opacity: 0.8,
+                  fontSize: 13,
+                  marginTop: 10,
+                }}
+              >
+                {position.reason}
+              </p>
             </div>
           ))}
         </div>

@@ -4,8 +4,10 @@ from core.live_transaction_signer import sign_swap_transaction
 from core.live_transaction_sender import send_signed_transaction
 from core.live_trade_journal import record_live_sell
 from core.live_learning_recorder import record_live_completed_trade
+from core.live_wallet_reader import live_wallet_status
 
 import requests
+import time
 
 
 JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap"
@@ -60,90 +62,179 @@ def build_sell_transaction(input_mint, amount_raw, slippage_bps=150):
     }
 
 
+def _is_token_still_held(wallet, mint):
+    tokens = wallet.get("tokens", [])
+    for t in tokens:
+        if t.get("mint") == mint and float(t.get("amount", 0)) > 0:
+            return True
+    return False
+
+
+def _error_text(error):
+    return str(error or "")
+
+
+def _is_blockhash_error(error):
+    text = _error_text(error).lower()
+    return "blockhash not found" in text or "blockhash" in text
+
+
+def send_sell_with_fresh_blockhash_retry(input_mint, amount_raw, slippage_bps):
+    """
+    Builds, signs, and sends a sell transaction.
+    If Solana rejects it because the blockhash expired, rebuild Jupiter swap once
+    so the transaction has a fresh blockhash.
+    """
+    last_built = None
+    last_signed = None
+    last_sent = None
+
+    for attempt in range(1, 3):
+        built = build_sell_transaction(
+            input_mint=input_mint,
+            amount_raw=amount_raw,
+            slippage_bps=slippage_bps,
+        )
+        last_built = built
+
+        if not built.get("swap_transaction"):
+            return {
+                "ok": False,
+                "stage": "BUILD_FAIL",
+                "error": "No swap transaction from Jupiter",
+                "built": built,
+                "signed": last_signed,
+                "sent": last_sent,
+                "attempt": attempt,
+            }
+
+        signed = sign_swap_transaction(built["swap_transaction"])
+        last_signed = signed
+
+        if not signed.get("ok"):
+            return {
+                "ok": False,
+                "stage": "SIGN_FAIL",
+                "error": signed.get("error"),
+                "built": built,
+                "signed": signed,
+                "sent": last_sent,
+                "attempt": attempt,
+            }
+
+        sent = send_signed_transaction(signed.get("signed_transaction"))
+        last_sent = sent
+
+        if sent.get("ok") and sent.get("signature"):
+            return {
+                "ok": True,
+                "stage": "SENT",
+                "signature": sent.get("signature"),
+                "built": built,
+                "signed": signed,
+                "sent": sent,
+                "attempt": attempt,
+            }
+
+        error = sent.get("error")
+
+        if _is_blockhash_error(error) and attempt == 1:
+            time.sleep(1)
+            continue
+
+        return {
+            "ok": False,
+            "stage": "SEND_FAIL",
+            "error": error,
+            "built": built,
+            "signed": signed,
+            "sent": sent,
+            "attempt": attempt,
+        }
+
+    return {
+        "ok": False,
+        "stage": "SEND_FAIL",
+        "error": "Sell send failed after fresh blockhash retry.",
+        "built": last_built,
+        "signed": last_signed,
+        "sent": last_sent,
+        "attempt": 2,
+    }
+
+
 def execute_live_sell(payload: dict):
     input_mint = payload.get("token_address") or payload.get("input_mint")
     amount_raw = payload.get("amount_raw")
     slippage_bps = int(payload.get("slippage_bps") or 150)
 
     if not input_mint:
-        return {
-            "ok": False,
-            "type": "SELL",
-            "stage": "VALIDATION",
-            "error": "token_address is required",
-            "signal": payload,
-        }
+        return {"ok": False, "stage": "VALIDATION", "error": "missing token_address"}
 
     if not amount_raw:
-        return {
-            "ok": False,
-            "type": "SELL",
-            "stage": "VALIDATION",
-            "error": "amount_raw is required",
-            "signal": payload,
-        }
+        return {"ok": False, "stage": "VALIDATION", "error": "missing amount_raw"}
 
     try:
-        built = build_sell_transaction(
+        sent_result = send_sell_with_fresh_blockhash_retry(
             input_mint=input_mint,
             amount_raw=amount_raw,
             slippage_bps=slippage_bps,
         )
 
-        if not built.get("swap_transaction"):
+        if not sent_result.get("ok"):
             result = {
                 "ok": False,
                 "type": "SELL",
-                "stage": "BUILD_SELL_SWAP",
-                "error": "Jupiter did not return swap_transaction.",
-                "built": built,
+                "stage": sent_result.get("stage", "SEND_FAIL"),
+                "error": sent_result.get("error"),
+                "built": sent_result.get("built"),
+                "signed": sent_result.get("signed"),
+                "sent": sent_result.get("sent"),
+                "send_attempt": sent_result.get("attempt"),
                 "signal": payload,
             }
             record_live_sell(result, payload)
             return result
 
-        signed = sign_swap_transaction(built.get("swap_transaction"))
+        signature = sent_result["signature"]
 
-        if not signed.get("ok"):
-            result = {
-                "ok": False,
-                "type": "SELL",
-                "stage": "SIGN",
-                "error": signed.get("error"),
-                "built": built,
-                "signal": payload,
-            }
-            record_live_sell(result, payload)
-            return result
+        confirmed = False
 
-        sent = send_signed_transaction(signed.get("signed_transaction"))
+        for _ in range(6):
+            time.sleep(2)
+            wallet = live_wallet_status()
+
+            if not _is_token_still_held(wallet, input_mint):
+                confirmed = True
+                break
 
         result = {
-            "ok": sent.get("ok", False),
+            "ok": confirmed,
             "type": "SELL",
-            "stage": "SENT" if sent.get("ok") else "SEND_FAILED",
-            "signature": sent.get("signature"),
-            "error": sent.get("error"),
-            "built": built,
-            "sent": sent,
-            "message": "Live sell executed." if sent.get("ok") else "Live sell failed during send.",
+            "stage": "CONFIRMED" if confirmed else "UNCONFIRMED",
+            "signature": signature,
+            "error": None if confirmed else "Sell not confirmed on-chain",
+            "built": sent_result.get("built"),
+            "signed": sent_result.get("signed"),
+            "sent": sent_result.get("sent"),
+            "send_attempt": sent_result.get("attempt"),
             "signal": payload,
+            "message": "Sell confirmed" if confirmed else "Sell failed confirmation check",
         }
 
-        journal_entry = record_live_sell(result, payload)
-        result["journal_entry"] = journal_entry
+        record_live_sell(result, payload)
 
-        if result.get("ok"):
-            result["learned"] = record_live_completed_trade(payload, result)
+        if result["ok"]:
+            record_live_completed_trade(payload, result)
 
         return result
 
-    except Exception as error:
+    except Exception as e:
         result = {
             "ok": False,
             "type": "SELL",
-            "stage": "ERROR",
-            "error": str(error),
+            "stage": "EXCEPTION",
+            "error": str(e),
             "signal": payload,
         }
 

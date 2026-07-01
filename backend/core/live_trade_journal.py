@@ -15,29 +15,16 @@ def load_live_trade_journal():
     ensure_data_dir()
 
     if not os.path.exists(JOURNAL_FILE):
-        return {
-            "ok": True,
-            "count": 0,
-            "trades": [],
-        }
+        return {"ok": True, "count": 0, "trades": []}
 
     try:
         with open(JOURNAL_FILE, "r", encoding="utf-8") as file:
             trades = json.load(file)
 
-        return {
-            "ok": True,
-            "count": len(trades),
-            "trades": trades,
-        }
+        return {"ok": True, "count": len(trades), "trades": trades}
 
     except Exception as error:
-        return {
-            "ok": False,
-            "count": 0,
-            "trades": [],
-            "error": str(error),
-        }
+        return {"ok": False, "count": 0, "trades": [], "error": str(error)}
 
 
 def save_live_trade_journal(trades):
@@ -51,9 +38,15 @@ def record_live_buy(execution_result, signal=None):
     journal = load_live_trade_journal()
     trades = journal.get("trades", [])
 
-    built = execution_result.get("built", {})
-    quote = built.get("quote", {})
-    sent = execution_result.get("sent", {})
+    built = execution_result.get("built", {}) or {}
+    quote = built.get("quote", {}) or {}
+    sent = execution_result.get("sent", {}) or {}
+
+    output_mint = (
+        quote.get("outputMint")
+        or built.get("output_mint")
+        or (signal or {}).get("token_address")
+    )
 
     trade = {
         "id": len(trades) + 1,
@@ -61,11 +54,11 @@ def record_live_buy(execution_result, signal=None):
         "status": "SENT" if execution_result.get("ok") else "FAILED",
         "created_at": datetime.utcnow().isoformat(),
         "wallet_address": built.get("wallet_address"),
-        "token_address": built.get("output_mint"),
+        "token_address": output_mint,
         "sol_amount": built.get("sol_amount"),
         "slippage_bps": built.get("slippage_bps"),
-        "input_mint": quote.get("inputMint"),
-        "output_mint": quote.get("outputMint"),
+        "input_mint": quote.get("inputMint") or built.get("input_mint"),
+        "output_mint": quote.get("outputMint") or built.get("output_mint"),
         "in_amount_raw": quote.get("inAmount"),
         "out_amount_raw": quote.get("outAmount"),
         "swap_usd_value": quote.get("swapUsdValue"),
@@ -79,16 +72,24 @@ def record_live_buy(execution_result, signal=None):
 
     trades.append(trade)
     save_live_trade_journal(trades)
-
     return trade
+
 
 def record_live_sell(execution_result, signal=None):
     journal = load_live_trade_journal()
     trades = journal.get("trades", [])
 
-    built = execution_result.get("built", {})
-    quote = built.get("quote", {})
-    sent = execution_result.get("sent", {})
+    built = execution_result.get("built", {}) or {}
+    quote = built.get("quote", {}) or {}
+    sent = execution_result.get("sent", {}) or {}
+    signal = signal or {}
+
+    sold_token_mint = (
+        signal.get("token_address")
+        or signal.get("input_mint")
+        or quote.get("inputMint")
+        or built.get("input_mint")
+    )
 
     trade = {
         "id": len(trades) + 1,
@@ -96,10 +97,10 @@ def record_live_sell(execution_result, signal=None):
         "status": "SENT" if execution_result.get("ok") else "FAILED",
         "created_at": datetime.utcnow().isoformat(),
         "wallet_address": built.get("wallet_address"),
-        "token_address": built.get("input_mint"),
+        "token_address": sold_token_mint,
         "slippage_bps": built.get("slippage_bps"),
-        "input_mint": quote.get("inputMint"),
-        "output_mint": quote.get("outputMint"),
+        "input_mint": quote.get("inputMint") or built.get("input_mint"),
+        "output_mint": quote.get("outputMint") or built.get("output_mint"),
         "in_amount_raw": quote.get("inAmount"),
         "out_amount_raw": quote.get("outAmount"),
         "swap_usd_value": quote.get("swapUsdValue"),
@@ -108,7 +109,7 @@ def record_live_sell(execution_result, signal=None):
         "stage": execution_result.get("stage"),
         "message": execution_result.get("message"),
         "error": execution_result.get("error"),
-        "signal": signal or {},
+        "signal": signal,
     }
 
     trades.append(trade)

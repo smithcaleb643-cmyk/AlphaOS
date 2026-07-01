@@ -1,18 +1,20 @@
 from datetime import datetime
+import time
 
+from core.alpha_brain import evaluate_exit_decision
 from core.live_portfolio import get_live_portfolio
 from core.live_sell_executor import execute_live_sell
 from core.live_exit_state import is_position_exiting, mark_position_exiting, clear_position_exiting
+from core.live_trade_journal import load_live_trade_journal, save_live_trade_journal
 
 
-TAKE_PROFIT_PERCENT = 20
-STOP_LOSS_PERCENT = -10
-MAX_HOLD_MINUTES = 45
+SELL_RETRY_ATTEMPTS = 3
+SELL_RETRY_DELAY_SECONDS = 4
 
 
-def safe_float(value, default=0):
+def safe_int(value, default=0):
     try:
-        return float(value or default)
+        return int(float(value or default))
     except Exception:
         return default
 
@@ -25,24 +27,75 @@ def minutes_held(entry_time):
         return 0
 
 
-def raw_amount_from_quantity(quantity, decimals=6):
-    return str(int(safe_float(quantity) * (10 ** decimals)))
+def raw_fraction(amount_raw, fraction):
+    return str(max(1, int(safe_int(amount_raw) * float(fraction or 1))))
 
 
-def evaluate_position_exit(position):
-    pnl_percent = safe_float(position.get("pnl_percent"))
-    held_minutes = minutes_held(position.get("entry_time"))
+def update_buy_trade_state(position, updates):
+    journal = load_live_trade_journal()
+    trades = journal.get("trades", [])
 
-    if pnl_percent >= TAKE_PROFIT_PERCENT:
-        return {"should_sell": True, "reason": "TAKE_PROFIT", "message": f"Take profit hit: {round(pnl_percent, 2)}%"}
+    for trade in trades:
+        if trade.get("id") == position.get("trade_id"):
+            trade.update(updates)
+            save_live_trade_journal(trades)
+            return trade
 
-    if pnl_percent <= STOP_LOSS_PERCENT:
-        return {"should_sell": True, "reason": "STOP_LOSS", "message": f"Stop loss hit: {round(pnl_percent, 2)}%"}
+    return None
 
-    if held_minutes >= MAX_HOLD_MINUTES:
-        return {"should_sell": True, "reason": "MAX_HOLD_TIME", "message": f"Max hold reached: {round(held_minutes, 1)} min"}
 
-    return {"should_sell": False, "reason": "HOLD", "message": f"Holding. P&L {round(pnl_percent, 2)}%, held {round(held_minutes, 1)} min"}
+def add_partial_exit_note(position, label, fraction, result):
+    journal = load_live_trade_journal()
+    trades = journal.get("trades", [])
+
+    for trade in trades:
+        if trade.get("id") == position.get("trade_id"):
+            trade.setdefault("partial_exits", [])
+            trade["partial_exits"].append({
+                "label": label,
+                "percent_sold": fraction,
+                "signature": result.get("signature"),
+                "created_at": datetime.utcnow().isoformat(),
+                "pnl_percent": position.get("pnl_percent"),
+                "price": position.get("current_price"),
+            })
+            save_live_trade_journal(trades)
+            return trade
+
+    return None
+
+
+def sell_with_retry(position, amount_raw, label, slippage_bps=150):
+    token_address = position.get("mint")
+    last_result = None
+
+    for attempt in range(1, SELL_RETRY_ATTEMPTS + 1):
+        result = execute_live_sell({
+            "token_address": token_address,
+            "amount_raw": str(amount_raw),
+            "slippage_bps": slippage_bps,
+            "exit_reason": label,
+            "entry_signature": position.get("signature"),
+            "entry_price": position.get("entry_price"),
+            "exit_price": position.get("current_price"),
+            "pnl_percent": position.get("pnl_percent"),
+            "pnl_usd": position.get("pnl_usd"),
+            "held_minutes": minutes_held(position.get("entry_time")),
+            "sell_attempt": attempt,
+        })
+
+        last_result = result
+
+        if result.get("ok"):
+            result["sell_attempts"] = attempt
+            return result
+
+        time.sleep(SELL_RETRY_DELAY_SECONDS)
+
+    return last_result or {
+        "ok": False,
+        "error": "Sell failed before any result.",
+    }
 
 
 def manage_open_positions():
@@ -52,9 +105,10 @@ def manage_open_positions():
 
     for position in positions:
         token_address = position.get("mint")
-        decision = evaluate_position_exit(position)
+        decision = evaluate_exit_decision(position)
 
         if not decision.get("should_sell"):
+            update_buy_trade_state(position, decision.get("updates", {}))
             actions.append({
                 "symbol": position.get("symbol"),
                 "action": "HOLD",
@@ -65,28 +119,47 @@ def manage_open_positions():
         if is_position_exiting(token_address):
             actions.append({
                 "symbol": position.get("symbol"),
-                "action": "WAITING",
-                "reason": "Sell already pending",
+                "action": "EXIT_BLOCKED",
+                "reason": "Sell already pending or previously failed. Manual review required.",
+                "result": {
+                    "ok": False,
+                    "error": "Exit state already active.",
+                },
             })
             continue
 
         mark_position_exiting(token_address)
 
-        result = execute_live_sell({
-            "token_address": token_address,
-            "amount_raw": raw_amount_from_quantity(position.get("quantity")),
-            "slippage_bps": 150,
-            "exit_reason": decision.get("reason"),
-            "entry_signature": position.get("signature"),
-            "entry_price": position.get("entry_price"),
-            "exit_price": position.get("current_price"),
-            "pnl_percent": position.get("pnl_percent"),
-            "pnl_usd": position.get("pnl_usd"),
-            "held_minutes": minutes_held(position.get("entry_time")),
-        })
+        amount_raw = position.get("amount_raw")
+        sell_amount_raw = raw_fraction(amount_raw, decision.get("fraction", 1.0))
 
-        if not result.get("ok"):
+        result = sell_with_retry(
+            position=position,
+            amount_raw=sell_amount_raw,
+            label=decision.get("label"),
+            slippage_bps=300 if decision.get("urgent") else 150,
+        )
+
+        if result.get("ok"):
+            update_buy_trade_state(position, decision.get("updates", {}))
+
+            if float(decision.get("fraction") or 1.0) < 1.0:
+                add_partial_exit_note(
+                    position,
+                    decision.get("label"),
+                    decision.get("fraction"),
+                    result,
+                )
+
             clear_position_exiting(token_address)
+        else:
+            actions.append({
+                "symbol": position.get("symbol"),
+                "action": "SELL_FAILED",
+                "reason": decision.get("message"),
+                "result": result,
+            })
+            continue
 
         actions.append({
             "symbol": position.get("symbol"),

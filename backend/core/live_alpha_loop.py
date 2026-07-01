@@ -4,26 +4,81 @@ import time
 from core.live_alpha_controller import LIVE_ALPHA_STATE, stop_live_alpha
 from core.live_portfolio import get_live_portfolio
 from core.live_trade_executor import execute_live_buy
-from core.alpha_engine import get_best_live_opportunity
+from core.alpha_brain import rank_candidates
+from core.alpha_engine import get_ranked_live_opportunities
 from core.live_position_manager import manage_open_positions
 from core.live_mock_executor import execute_mock_buy
+from core.paper_trader import get_paper_state
+from core.risk_manager import approve_trade
 
 _loop_thread = None
 _last_buy_time = 0
 
 
-def already_holding_token(portfolio, token_address):
-    if not token_address:
-        return False
+def coin_name(candidate):
+    return (
+        candidate.get("coin_name")
+        or candidate.get("symbol")
+        or candidate.get("name")
+        or candidate.get("token_address")
+        or "UNKNOWN"
+    )
 
-    for token in portfolio.get("tokens", []):
-        mint = token.get("mint") or token.get("token_address")
-        amount = float(token.get("amount") or token.get("balance") or 0)
 
-        if mint == token_address and amount > 0:
-            return True
+def execute_candidate(candidate):
+    name = coin_name(candidate)
 
-    return False
+    payload = {
+        "coin_name": name,
+        "symbol": name,
+        "token_address": candidate.get("token_address"),
+        "score": int(candidate.get("score") or 0),
+        "probability": candidate.get("probability", 0),
+        "risk_score": candidate.get("risk_score", 0),
+        "reason": candidate.get("reason", ""),
+        "usd_amount": LIVE_ALPHA_STATE["trade_size_usd"],
+        "price_usd": candidate.get("price_usd"),
+    }
+
+    if LIVE_ALPHA_STATE["execution_mode"] == "MOCK":
+        return execute_mock_buy(payload)
+
+    return execute_live_buy({
+        **payload,
+        "sol_amount": 0.005,
+        "slippage_bps": 100,
+    })
+
+
+def exit_failure_detected(position_result):
+    for action in position_result.get("actions", []):
+        result = action.get("result") or {}
+
+        if action.get("action") in ["EXIT_BLOCKED", "SELL_FAILED"]:
+            return True, action
+
+        if action.get("action") == "SELL" and result.get("ok") is False:
+            return True, action
+
+    return False, None
+
+
+def build_live_risk_state(portfolio):
+    paper_state = get_paper_state()
+    paper_settings = dict(paper_state.get("settings", {}))
+
+    starting_cash = float(paper_settings.get("starting_cash") or 10000)
+    trade_size = float(paper_settings.get("trade_size") or LIVE_ALPHA_STATE["trade_size_usd"])
+
+    return {
+        "cash": starting_cash,
+        "open_trades": portfolio.get("positions", []),
+        "settings": {
+            **paper_settings,
+            "starting_cash": starting_cash,
+            "trade_size": trade_size,
+        },
+    }
 
 
 def _alpha_loop():
@@ -31,137 +86,139 @@ def _alpha_loop():
 
     while LIVE_ALPHA_STATE["running"]:
         try:
+            LIVE_ALPHA_STATE["last_action"] = "Managing exits first..."
+
+            position_result = manage_open_positions()
+            failed_exit, failed_action = exit_failure_detected(position_result)
+
+            if failed_exit:
+                LIVE_ALPHA_STATE["auto_buy_enabled"] = False
+                LIVE_ALPHA_STATE["running"] = False
+                LIVE_ALPHA_STATE["last_action"] = (
+                    f"🚨 EXIT FAILURE: {failed_action.get('symbol')} — "
+                    f"{failed_action.get('reason')}. Auto Buy disabled."
+                )
+                break
+
+            if position_result.get("actions"):
+                last = position_result["actions"][-1]
+                LIVE_ALPHA_STATE["last_action"] = (
+                    f"Exit manager: {last.get('action')} — {last.get('reason')}"
+                )
+                time.sleep(2)
+
             portfolio = get_live_portfolio()
 
-            LIVE_ALPHA_STATE["last_action"] = "Checking open positions..."
-
-            try:
-                position_result = manage_open_positions()
-
-                if position_result.get("actions"):
-                    LIVE_ALPHA_STATE["last_action"] = (
-                        f"Position manager: {position_result['actions'][-1].get('reason')}"
-                    )
-
-            except Exception as error:
-                LIVE_ALPHA_STATE["last_action"] = f"Position manager error: {error}"
-
-            # Safety 1: daily loss limit
             if portfolio.get("today_pnl_usd", 0) <= -LIVE_ALPHA_STATE["max_daily_loss_usd"]:
+                LIVE_ALPHA_STATE["auto_buy_enabled"] = False
                 LIVE_ALPHA_STATE["last_action"] = "Daily loss limit reached. Stopping."
                 stop_live_alpha()
                 break
 
-            # Safety 2: max open positions
-            if portfolio.get("open_positions", 0) >= LIVE_ALPHA_STATE["max_open_positions"]:
+            open_positions = int(portfolio.get("open_positions") or 0)
+            max_positions = int(LIVE_ALPHA_STATE["max_open_positions"])
+
+            if open_positions >= max_positions:
                 LIVE_ALPHA_STATE["last_action"] = "Waiting: max positions reached."
                 time.sleep(5)
-                continue
-
-            LIVE_ALPHA_STATE["scans_today"] += 1
-            LIVE_ALPHA_STATE["last_action"] = "Live scan started..."
-
-            best = get_best_live_opportunity(
-                minimum_score=LIVE_ALPHA_STATE["minimum_score"],
-                limit=10,
-            )
-
-            LIVE_ALPHA_STATE["last_action"] = "Live scan finished. Evaluating candidate..."
-
-            if not best.get("ok"):
-                LIVE_ALPHA_STATE["last_action"] = (
-                    f"No BUY candidate above score "
-                    f"{LIVE_ALPHA_STATE['minimum_score']} ({best.get('reason')})."
-                )
-                time.sleep(5)
-                continue
-
-            candidate = best.get("opportunity") or {}
-
-            name = (
-    candidate.get("coin_name")
-    or candidate.get("symbol")
-    or candidate.get("name")
-    or candidate.get("token_address")
-    or "UNKNOWN"
-)
-            score = int(candidate.get("score") or 0)
-            probability = candidate.get("probability", 0)
-            risk_score = candidate.get("risk_score", 0)
-            token_address = candidate.get("token_address")
-            reason = candidate.get("reason", "")
-
-            if not token_address:
-                LIVE_ALPHA_STATE["last_action"] = f"Cannot buy {name}: missing token address."
-                time.sleep(10)
-                continue
-
-            if already_holding_token(portfolio, token_address):
-                LIVE_ALPHA_STATE["last_action"] = f"Skipping {name}: already holding token."
-                time.sleep(10)
                 continue
 
             now = time.time()
             remaining = LIVE_ALPHA_STATE["buy_cooldown_seconds"] - (now - _last_buy_time)
 
             if remaining > 0:
-                LIVE_ALPHA_STATE["last_action"] = (
-                    f"Cooldown {int(remaining)}s remaining before next buy."
-                )
+                LIVE_ALPHA_STATE["last_action"] = f"Cooldown {int(remaining)}s remaining."
                 time.sleep(3)
                 continue
 
             if not LIVE_ALPHA_STATE["auto_buy_enabled"]:
-                LIVE_ALPHA_STATE["last_action"] = (
-                    f"WOULD BUY {name} "
-                    f"(score {score}, prob {probability}%, risk {risk_score}) "
-                    f"(${LIVE_ALPHA_STATE['trade_size_usd']}) "
-                    f"(Auto Buy OFF) — {reason[:120]}"
-                )
+                LIVE_ALPHA_STATE["last_action"] = "Auto Buy OFF. Monitoring exits only."
                 time.sleep(5)
                 continue
 
-            LIVE_ALPHA_STATE["last_action"] = (
-                f"Executing {LIVE_ALPHA_STATE['execution_mode']} trade..."
-            )
+            LIVE_ALPHA_STATE["scans_today"] += 1
+            LIVE_ALPHA_STATE["last_action"] = "Scanning with shared Alpha Brain..."
 
-            payload = {
-                "coin_name": name,
-                "symbol": name,
-                "token_address": token_address,
-                "score": score,
-                "probability": probability,
-                "risk_score": risk_score,
-                "reason": reason,
-                "usd_amount": LIVE_ALPHA_STATE["trade_size_usd"],
-                "price_usd": candidate.get("price_usd"),
+            scan = get_ranked_live_opportunities(limit=100)
+
+            if not scan.get("ok"):
+                LIVE_ALPHA_STATE["last_action"] = f"Scan skipped: {scan.get('reason')}"
+                time.sleep(5)
+                continue
+
+            ranked = rank_candidates(scan.get("ranked", []))
+
+            held_tokens = {
+                p.get("mint")
+                for p in portfolio.get("positions", [])
+                if p.get("mint")
             }
 
-            if LIVE_ALPHA_STATE["execution_mode"] == "MOCK":
-                result = execute_mock_buy(payload)
-            else:
-                result = execute_live_buy({
-                    **payload,
-                    "sol_amount": 0.005,
-                    "slippage_bps": 100,
-                })
+            risk_state = build_live_risk_state(portfolio)
 
-            _last_buy_time = time.time()
+            slots_left = max_positions - open_positions
+            bought = 0
+            skipped = 0
+            blocked = 0
+            last_reason = None
 
-            if result.get("ok"):
-                LIVE_ALPHA_STATE["trades_today"] += 1
+            for candidate in ranked:
+                if slots_left <= 0:
+                    break
+
+                token_address = candidate.get("token_address")
+                name = coin_name(candidate)
+                action = candidate.get("action")
+
+                if not token_address:
+                    skipped += 1
+                    continue
+
+                if token_address in held_tokens:
+                    skipped += 1
+                    last_reason = f"Already holding {name}"
+                    continue
+
+                if action not in ["BUY", "WATCH"]:
+                    skipped += 1
+                    continue
+
+                approval = approve_trade(candidate, risk_state)
+                candidate["risk_approval"] = approval
+
+                if not approval.get("approved"):
+                    blocked += 1
+                    last_reason = approval.get("reason")
+                    continue
+
+                LIVE_ALPHA_STATE["last_action"] = f"Buying {name}..."
+
+                result = execute_candidate(candidate)
+                _last_buy_time = time.time()
+
+                if result.get("ok"):
+                    bought += 1
+                    slots_left -= 1
+                    held_tokens.add(token_address)
+                    LIVE_ALPHA_STATE["trades_today"] += 1
+                    LIVE_ALPHA_STATE["last_action"] = f"LIVE BUY: {name}"
+                    time.sleep(2)
+                else:
+                    blocked += 1
+                    last_reason = result.get("error") or result.get("message")
+                    LIVE_ALPHA_STATE["last_action"] = f"Buy failed: {last_reason}"
+
+            if bought == 0:
                 LIVE_ALPHA_STATE["last_action"] = (
-                    f"{LIVE_ALPHA_STATE['execution_mode']} BUY: {name}"
-                )
-            else:
-                LIVE_ALPHA_STATE["last_action"] = (
-                    f"Trade failed: {result.get('error', result.get('message'))}"
+                    f"No buys. blocked={blocked}, skipped={skipped}, reason={last_reason}"
                 )
 
             time.sleep(5)
 
         except Exception as error:
-            LIVE_ALPHA_STATE["last_action"] = f"Loop error: {error}"
+            LIVE_ALPHA_STATE["auto_buy_enabled"] = False
+            LIVE_ALPHA_STATE["running"] = False
+            LIVE_ALPHA_STATE["last_action"] = f"🚨 Live loop crash: {error}"
             time.sleep(5)
 
 
