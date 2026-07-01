@@ -1,4 +1,4 @@
-from core.paper_broker import paper_broker
+from core.execution_manager import execute_buy
 from core.live_broker import live_broker
 
 

@@ -34,44 +34,14 @@ def usd_to_sol_amount(usd_amount):
     return float(usd_amount) / sol_price
 
 
-def wallet_has_token(token_mint):
-    wallet = live_wallet_status()
-
-    for token in wallet.get("tokens", []):
-        if token.get("mint") == token_mint and safe_float(token.get("amount")) > 0:
-            return True
-
-    return False
-
-
-def confirm_buy_received(token_mint, attempts=6, delay_seconds=2):
-    for _ in range(attempts):
-        time.sleep(delay_seconds)
-
-        if wallet_has_token(token_mint):
-            return {
-                "ok": True,
-                "confirmed": True,
-                "message": "Token received in wallet.",
-            }
-
-    return {
-        "ok": False,
-        "confirmed": False,
-        "message": "Wallet never received purchased token.",
-    }
-
-
 def execute_live_buy(signal: dict):
     global BUY_IN_PROGRESS
 
     if BUY_IN_PROGRESS:
         return {
             "ok": False,
-            "type": "BUY",
             "stage": "BUY_LOCK",
-            "error": "Another buy is already executing.",
-            "signal": signal,
+            "error": "Another trade is running",
         }
 
     BUY_IN_PROGRESS = True
@@ -80,31 +50,8 @@ def execute_live_buy(signal: dict):
         output_mint = signal.get("token_address")
 
         usd_amount = safe_float(signal.get("usd_amount") or signal.get("trade_size_usd"))
-        explicit_sol_amount = signal.get("sol_amount")
-
-        if usd_amount > 0:
-            sol_amount = usd_to_sol_amount(usd_amount)
-        else:
-            sol_amount = safe_float(explicit_sol_amount or 0.01)
-
+        sol_amount = usd_to_sol_amount(usd_amount) if usd_amount else 0.01
         slippage_bps = int(signal.get("slippage_bps") or 100)
-
-        if not output_mint:
-            result = {
-                "ok": False,
-                "type": "BUY",
-                "stage": "VALIDATION",
-                "error": "token_address is required",
-                "signal": signal,
-            }
-            record_live_buy(result, signal)
-            return result
-
-        sol_usd_price = get_sol_usd_price()
-
-        signal["usd_amount"] = usd_amount
-        signal["sol_amount"] = sol_amount
-        signal["sol_usd_price"] = sol_usd_price
 
         built = build_swap_transaction(
             output_mint=output_mint,
@@ -113,85 +60,41 @@ def execute_live_buy(signal: dict):
         )
 
         if not built.get("ok"):
-            result = {
-                "ok": False,
-                "type": "BUY",
-                "stage": "BUILD_SWAP",
-                "error": built.get("error"),
-                "built": built,
-                "signal": signal,
-            }
-            record_live_buy(result, signal)
-            return result
+            return built
 
         safety = evaluate_swap_build(built)
 
         if not safety.get("approved"):
-            result = {
+            return {
                 "ok": False,
-                "type": "BUY",
-                "stage": "EXECUTION_SAFETY",
+                "stage": "SAFETY",
                 "error": safety.get("reason"),
                 "safety": safety,
-                "built": built,
-                "signal": signal,
             }
-            record_live_buy(result, signal)
-            return result
 
-        # =========================
-        # FIXED SIGNING CALL
-        # =========================
-        signed = sign_swap_transaction(
-            built.get("swap_transaction")
-        )
+        # ----------------------------
+        # SIGN (ALWAYS BASE64 STRING)
+        # ----------------------------
+        signed = sign_swap_transaction(built.get("swap_transaction"))
 
         if not signed.get("ok"):
-            result = {
+            return {
                 "ok": False,
-                "type": "BUY",
                 "stage": "SIGN",
                 "error": signed.get("error"),
-                "built": built,
-                "safety": safety,
-                "signed": signed,
-                "signal": signal,
             }
-            record_live_buy(result, signal)
-            return result
 
-        sent = send_signed_transaction(signed.get("signed_transaction"))
+        # ----------------------------
+        # SEND (ONLY STRING)
+        # ----------------------------
+        result = send_signed_transaction(signed.get("signed_transaction"))
 
-        result = {
-            "ok": sent.get("ok", False),
-            "type": "BUY",
-            "stage": "SENT" if sent.get("ok") else "SEND_FAILED",
-            "signature": sent.get("signature"),
-            "error": sent.get("error"),
-            "built": built,
-            "safety": safety,
-            "signed": signed,
-            "sent": sent,
-            "signal": signal,
-            "message": "Live buy sent." if sent.get("ok") else "Live buy failed during send.",
+        return {
+            "ok": result.get("ok", False),
+            "stage": "SENT" if result.get("ok") else "SEND_FAILED",
+            "signature": result.get("signature"),
+            "error": result.get("error"),
         }
-
-        if sent.get("ok"):
-            confirmation = confirm_buy_received(output_mint)
-            result["confirmation"] = confirmation
-
-            if confirmation.get("ok"):
-                result["stage"] = "CONFIRMED"
-                result["message"] = "Live buy confirmed. Token received in wallet."
-                result["ok"] = True
-            else:
-                result["stage"] = "CONFIRM_FAILED"
-                result["error"] = confirmation.get("message")
-                result["ok"] = False
-
-        record_live_buy(result, signal)
-
-        return result
 
     finally:
         BUY_IN_PROGRESS = False

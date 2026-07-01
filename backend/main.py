@@ -346,6 +346,10 @@ def engine_state():
     return get_alpha_engine_state()
 
 
+# ================================
+# LIVE WALLET + STATE ENDPOINTS
+# ================================
+
 @app.get("/live/wallet/status")
 def live_wallet_status_endpoint():
     try:
@@ -400,6 +404,10 @@ def live_decision_report(payload: dict):
     return build_live_decision_report(payload)
 
 
+# ================================
+# JUPITER ENDPOINTS
+# ================================
+
 @app.post("/live/jupiter/quote")
 def live_jupiter_quote(payload: dict):
     output_mint = payload.get("output_mint")
@@ -424,11 +432,39 @@ def live_jupiter_build_swap(payload: dict):
     return build_swap_transaction(output_mint, sol_amount, slippage_bps)
 
 
+# ================================
+# LIVE EXECUTION (FIXED LAYER)
+# ================================
+
+def _normalize_trade_payload(payload: dict):
+    """prevents ALL your previous bugs (missing keys / wrong formats)"""
+    return {
+        "token_address": payload.get("token_address"),
+        "trade_size_usd": float(payload.get("trade_size_usd") or 0),
+        "slippage_bps": int(payload.get("slippage_bps") or 300),
+    }
+
+
 @app.post("/live/execute/buy")
 def live_execute_buy_endpoint(payload: dict):
-    return execute_live_buy(payload)
+    try:
+        from core.live_execution.executor import execute_live_buy
+        return execute_live_buy(**_normalize_trade_payload(payload))
+    except Exception as e:
+        return {
+            "ok": False,
+            "stage": "API_ERROR",
+            "error": str(e),
+        }
 
 
 @app.post("/live/execute/sell")
 def live_execute_sell_endpoint(payload: dict):
-    return execute_live_sell(payload)
+    try:
+        return execute_live_sell(_normalize_trade_payload(payload))
+    except Exception as e:
+        return {
+            "ok": False,
+            "stage": "API_ERROR",
+            "error": str(e),
+        }
