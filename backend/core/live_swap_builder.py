@@ -5,10 +5,13 @@ from core.jupiter_service import (
     SOL_MINT,
     sol_to_lamports,
 )
+from core.live_wallet_reader import read_sol_balance
 
-JUPITER_SWAP_URL = "https://quote-api.jup.ag/v6/swap"
+JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap"
 
 ALPHA_TEST_WALLET = "E6js7TDTJm13uH79zQCBHMs9CKfwm4hjyXSDGurULkwY"
+
+MIN_SOL_BUFFER = 0.003
 
 
 def get_quote_for_swap(output_mint, sol_amount=0.01, slippage_bps=100):
@@ -24,8 +27,53 @@ def get_quote_for_swap(output_mint, sol_amount=0.01, slippage_bps=100):
     return response.json()
 
 
+def check_wallet_has_enough_sol(wallet_address, sol_amount):
+    balance = read_sol_balance(wallet_address)
+
+    if not balance.get("ok"):
+        return {
+            "ok": False,
+            "approved": False,
+            "reason": "Could not read live wallet balance.",
+            "balance": balance,
+        }
+
+    sol_balance = float(balance.get("sol_balance") or 0)
+    required = float(sol_amount) + MIN_SOL_BUFFER
+
+    if sol_balance < required:
+        return {
+            "ok": True,
+            "approved": False,
+            "reason": f"Not enough SOL. Wallet has {sol_balance}, needs at least {required}.",
+            "sol_balance": sol_balance,
+            "required_sol": required,
+        }
+
+    return {
+        "ok": True,
+        "approved": True,
+        "reason": "Wallet has enough SOL for swap plus fee buffer.",
+        "sol_balance": sol_balance,
+        "required_sol": required,
+    }
+
+
 def build_swap_transaction(output_mint, sol_amount=0.01, slippage_bps=100, wallet_address=ALPHA_TEST_WALLET):
     try:
+        balance_check = check_wallet_has_enough_sol(wallet_address, sol_amount)
+
+        if not balance_check.get("approved"):
+            return {
+                "ok": False,
+                "wallet_address": wallet_address,
+                "output_mint": output_mint,
+                "sol_amount": sol_amount,
+                "slippage_bps": slippage_bps,
+                "balance_check": balance_check,
+                "error": balance_check.get("reason"),
+            }
+
         quote = get_quote_for_swap(
             output_mint=output_mint,
             sol_amount=sol_amount,
@@ -51,6 +99,7 @@ def build_swap_transaction(output_mint, sol_amount=0.01, slippage_bps=100, walle
             "output_mint": output_mint,
             "sol_amount": sol_amount,
             "slippage_bps": slippage_bps,
+            "balance_check": balance_check,
             "quote": quote,
             "swap_transaction": swap_data.get("swapTransaction"),
             "last_valid_block_height": swap_data.get("lastValidBlockHeight"),

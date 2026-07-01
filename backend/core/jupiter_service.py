@@ -1,6 +1,6 @@
 import requests
 
-JUPITER_QUOTE_URL = "https://quote-api.jup.ag/v6/quote"
+JUPITER_QUOTE_URL = "https://lite-api.jup.ag/swap/v1/quote"
 
 SOL_MINT = "So11111111111111111111111111111111111111112"
 USDC_MINT = "EPjFWdd5AufqSSqeM2q8DMdKb3CXxjEfQZBqPohPmp"
