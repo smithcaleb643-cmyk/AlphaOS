@@ -2,8 +2,7 @@ import requests
 
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
 
-ALPHA_TEST_WALLET = "E6js7TDTJm13uH79zQCBHMs9CKfwm4hjyXSDGurULkwY"
-
+ALPHA_TEST_WALLET = "EFHxUKFpWTfgy64Q6rdsieDYTSgVVbfP1wqg5WaEEise"
 
 def lamports_to_sol(lamports):
     return lamports / 1_000_000_000

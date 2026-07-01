@@ -3,10 +3,14 @@ from datetime import datetime
 LIVE_ALPHA_STATE = {
     "running": False,
     "mode": "LIVE",
+    "execution_mode": "MOCK",
     "trade_size_usd": 1.0,
     "max_open_positions": 1,
     "max_daily_loss_usd": 2.0,
     "daily_profit_target_usd": 5.0,
+    "minimum_score": 50,
+    "buy_cooldown_seconds": 60,
+    "auto_buy_enabled": False,
     "trades_today": 0,
     "scans_today": 0,
     "started_at": None,
@@ -27,9 +31,10 @@ def start_live_alpha():
     LIVE_ALPHA_STATE["started_at"] = datetime.utcnow().isoformat()
     LIVE_ALPHA_STATE["stopped_at"] = None
     LIVE_ALPHA_STATE["last_action"] = "Live Alpha started."
-
+    print("START LIVE ALPHA: importing loop...")
     from core.live_alpha_loop import launch_live_alpha
     launch_live_alpha()
+    print("START LIVE ALPHA: loop launched.")
 
     return get_live_alpha_state()
 
@@ -54,6 +59,20 @@ def update_live_alpha_settings(settings: dict):
 
     if "daily_profit_target_usd" in settings:
         LIVE_ALPHA_STATE["daily_profit_target_usd"] = float(settings["daily_profit_target_usd"])
+
+    if "minimum_score" in settings:
+        LIVE_ALPHA_STATE["minimum_score"] = int(settings["minimum_score"])
+
+    if "buy_cooldown_seconds" in settings:
+        LIVE_ALPHA_STATE["buy_cooldown_seconds"] = int(settings["buy_cooldown_seconds"])
+
+    if "auto_buy_enabled" in settings:
+        LIVE_ALPHA_STATE["auto_buy_enabled"] = bool(settings["auto_buy_enabled"])
+
+    if "execution_mode" in settings:
+        mode = str(settings["execution_mode"]).upper()
+        if mode in ["MOCK", "LIVE"]:
+            LIVE_ALPHA_STATE["execution_mode"] = mode
 
     LIVE_ALPHA_STATE["last_action"] = "Live Alpha settings updated."
 

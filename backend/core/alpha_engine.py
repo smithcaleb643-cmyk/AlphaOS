@@ -39,6 +39,7 @@ engine_state = {
 
     "last_blocked_reasons": [],
     "last_ranked_opportunities": [],
+    "last_best_opportunity": None,
     "execution_layer": "Execution Manager",
 }
 
@@ -249,6 +250,121 @@ def try_execute_opportunity(opportunity):
         "reason": response.get("message"),
         "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
         "score": opportunity.get("score"),
+    }
+
+
+
+def get_ranked_live_opportunities(limit=DISCOVERY_LIMIT):
+    """
+    Shared live opportunity pipeline.
+
+    This uses the same scanner, Alpha Brain scoring, learning adjustments,
+    and ranking logic as the paper Alpha Engine, but does not execute trades.
+    Live Alpha can use this to make decisions without duplicating brain logic.
+    """
+    if discovery_is_in_cooldown():
+        return {
+            "ok": False,
+            "reason": "cooldown",
+            "coins": [],
+            "opportunities": [],
+            "ranked": [],
+        }
+
+    try:
+        coins = scan_live_market(limit=limit)
+    except Exception as error:
+        if is_rate_limit_error(error):
+            print("LIVE OPPORTUNITY SCAN RATE LIMITED:", error)
+            start_discovery_cooldown("DexScreener 429")
+            return {
+                "ok": False,
+                "reason": "rate_limit",
+                "coins": [],
+                "opportunities": [],
+                "ranked": [],
+                "error": str(error),
+            }
+
+        return {
+            "ok": False,
+            "reason": "scan_error",
+            "coins": [],
+            "opportunities": [],
+            "ranked": [],
+            "error": str(error),
+        }
+
+    opportunities, scanner_price_lookup = build_opportunities_from_scan(coins)
+    ranked = rank_opportunities(opportunities)
+
+    if scanner_price_lookup:
+        update_open_trades(scanner_price_lookup)
+
+    engine_state["last_scan_count"] = len(coins)
+    engine_state["last_ranked_opportunities"] = [
+        {
+            "coin": item.get("symbol") or item.get("coin_name"),
+            "score": item.get("score"),
+            "probability": item.get("probability"),
+            "risk_score": item.get("risk_score"),
+            "action": item.get("action"),
+        }
+        for item in ranked[:10]
+    ]
+    engine_state["last_discovery_scan_at"] = now_iso()
+
+    return {
+        "ok": True,
+        "reason": None,
+        "coins": coins,
+        "opportunities": opportunities,
+        "ranked": ranked,
+    }
+
+
+def get_best_live_opportunity(minimum_score=70, limit=10):
+    """
+    Returns the best BUY opportunity above minimum_score.
+    Does not execute a trade.
+    """
+    scan = get_ranked_live_opportunities(limit=limit)
+
+    if not scan.get("ok"):
+        return {
+            "ok": False,
+            "reason": scan.get("reason"),
+            "error": scan.get("error"),
+            "opportunity": None,
+        }
+
+    for opportunity in scan.get("ranked", []):
+        score = int(opportunity.get("score") or 0)
+        action = opportunity.get("action")
+
+        if action in ["BUY", "WATCH"] and score >= int(minimum_score):
+            engine_state["last_best_opportunity"] = {
+                "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
+                "score": opportunity.get("score"),
+                "probability": opportunity.get("probability"),
+                "risk_score": opportunity.get("risk_score"),
+                "action": opportunity.get("action"),
+                "token_address": opportunity.get("token_address"),
+                "reason": opportunity.get("reason"),
+            }
+
+            return {
+                "ok": True,
+                "reason": "best_candidate_found",
+                "opportunity": opportunity,
+            }
+
+    engine_state["last_best_opportunity"] = None
+
+    return {
+        "ok": False,
+        "reason": "no_buy_candidate",
+        "opportunity": None,
     }
 
 

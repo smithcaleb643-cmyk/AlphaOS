@@ -94,11 +94,6 @@ def scan_live_market(limit=8):
 
             best_pair = pairs[0]
 
-            print("=" * 80)
-            print("RAW PAIR")
-            print(best_pair)
-            print("=" * 80)
-
             normalized = normalize_pair(best_pair)
 
             coin = {

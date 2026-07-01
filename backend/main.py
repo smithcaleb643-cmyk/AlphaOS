@@ -7,6 +7,7 @@ from core.live_decision_report import build_live_decision_report
 from core.adaptive_learning import apply_learning_to_signal
 from core.live_transaction_signer import sign_swap_transaction
 from core.live_transaction_sender import send_signed_transaction
+from core.live_sell_executor import execute_live_sell
 from core.live_trade_executor import execute_live_buy
 from core.live_trade_journal import load_live_trade_journal
 from core.live_portfolio import get_live_portfolio
@@ -426,3 +427,8 @@ def live_jupiter_build_swap(payload: dict):
 @app.post("/live/execute/buy")
 def live_execute_buy_endpoint(payload: dict):
     return execute_live_buy(payload)
+
+
+@app.post("/live/execute/sell")
+def live_execute_sell_endpoint(payload: dict):
+    return execute_live_sell(payload)
