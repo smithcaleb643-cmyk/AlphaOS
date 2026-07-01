@@ -6,7 +6,7 @@ from core.alpha_brain import score_coin
 from core.adaptive_learning import apply_learning_to_signal
 from core.paper_trader import get_paper_state
 from core.trade_manager import update_open_trades
-from core.paper_broker import paper_broker
+from core.execution_manager import execute_buy
 from core.risk_manager import approve_trade
 from services.market_service import scan_live_market, get_market_summary
 
@@ -24,16 +24,22 @@ engine_state = {
     "last_prices_updated": 0,
     "cycles": 0,
     "message": "Alpha Engine idle",
+
     "last_price_refresh_at": None,
     "last_discovery_scan_at": None,
     "next_price_refresh_in": 0,
     "next_discovery_scan_in": 0,
+
     "discovery_cooldown_until": 0,
     "discovery_cooldown_remaining": 0,
     "rate_limit_events": 0,
+
     "price_refresh_seconds": PRICE_REFRESH_SECONDS,
     "discovery_scan_seconds": DISCOVERY_SCAN_SECONDS,
+
     "last_blocked_reasons": [],
+    "last_ranked_opportunities": [],
+    "execution_layer": "Execution Manager",
 }
 
 price_cache = {}
@@ -158,7 +164,7 @@ def start_discovery_cooldown(reason="rate limit"):
 
 
 def rank_opportunities(opportunities):
-    return sorted(
+    ranked = sorted(
         opportunities,
         key=lambda item: (
             float(item.get("score") or 0),
@@ -168,25 +174,23 @@ def rank_opportunities(opportunities):
         reverse=True,
     )
 
+    engine_state["last_ranked_opportunities"] = [
+        {
+            "coin": item.get("symbol") or item.get("coin_name"),
+            "score": item.get("score"),
+            "probability": item.get("probability"),
+            "risk_score": item.get("risk_score"),
+            "wallet_adjustment": item.get("wallet_adjustment", 0),
+        }
+        for item in ranked[:10]
+    ]
 
-def run_discovery_scan():
-    if discovery_is_in_cooldown():
-        return {"coins": [], "trades_created": 0, "skipped": True, "reason": "cooldown"}
+    return ranked
 
-    try:
-        coins = scan_live_market(limit=DISCOVERY_LIMIT)
-    except Exception as error:
-        if is_rate_limit_error(error):
-            print("DISCOVERY RATE LIMITED:", error)
-            start_discovery_cooldown("DexScreener 429")
-            return {"coins": [], "trades_created": 0, "skipped": True, "reason": "rate_limit"}
-        raise
 
-    scanner_price_lookup = {}
+def build_opportunities_from_scan(coins):
     opportunities = []
-    trades_created = 0
-    trades_blocked = 0
-    blocked_reasons = []
+    scanner_price_lookup = {}
 
     for coin in coins:
         token = coin.get("token_address")
@@ -211,41 +215,80 @@ def run_discovery_scan():
             }
         )
 
+    return opportunities, scanner_price_lookup
+
+
+def try_execute_opportunity(opportunity):
+    state = get_paper_state()
+    approval = approve_trade(opportunity, state)
+    opportunity["risk_approval"] = approval
+
+    if not approval.get("approved"):
+        return {
+            "created": False,
+            "blocked": True,
+            "reason": approval.get("reason"),
+            "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
+            "score": opportunity.get("score"),
+        }
+
+    response = execute_buy(opportunity, profile_state=state)
+
+    if response.get("ok"):
+        return {
+            "created": True,
+            "blocked": False,
+            "reason": response.get("message"),
+            "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
+            "score": opportunity.get("score"),
+        }
+
+    return {
+        "created": False,
+        "blocked": True,
+        "reason": response.get("message"),
+        "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
+        "score": opportunity.get("score"),
+    }
+
+
+def run_discovery_scan():
+    if discovery_is_in_cooldown():
+        return {"coins": [], "trades_created": 0, "skipped": True, "reason": "cooldown"}
+
+    try:
+        coins = scan_live_market(limit=DISCOVERY_LIMIT)
+    except Exception as error:
+        if is_rate_limit_error(error):
+            print("DISCOVERY RATE LIMITED:", error)
+            start_discovery_cooldown("DexScreener 429")
+            return {"coins": [], "trades_created": 0, "skipped": True, "reason": "rate_limit"}
+
+        raise
+
+    opportunities, scanner_price_lookup = build_opportunities_from_scan(coins)
     ranked = rank_opportunities(opportunities)
 
+    trades_created = 0
+    trades_blocked = 0
+    blocked_reasons = []
+
     for opportunity in ranked:
-        state = get_paper_state()
-        approval = approve_trade(opportunity, state)
+        result = try_execute_opportunity(opportunity)
 
-        opportunity["risk_approval"] = approval
-
-        if not approval.get("approved"):
-            trades_blocked += 1
-
-            if len(blocked_reasons) < 10:
-                blocked_reasons.append(
-                    {
-                        "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
-                        "score": opportunity.get("score"),
-                        "reason": approval.get("reason"),
-                    }
-                )
-
+        if result["created"]:
+            trades_created += 1
             continue
 
-        response = paper_broker.buy(opportunity)
-
-        if response.get("ok"):
-            trades_created += 1
-        else:
+        if result["blocked"]:
             trades_blocked += 1
 
             if len(blocked_reasons) < 10:
                 blocked_reasons.append(
                     {
-                        "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
-                        "score": opportunity.get("score"),
-                        "reason": response.get("message"),
+                        "coin": result.get("coin"),
+                        "score": result.get("score"),
+                        "reason": result.get("reason"),
                     }
                 )
 
