@@ -1,6 +1,7 @@
 from core.broker import Broker, broker_response
 from core.live_wallet_reader import live_wallet_status
 from core.live_swap_builder import build_swap_transaction
+from core.live_execution_safety import evaluate_swap_build
 
 
 class LiveBroker(Broker):
@@ -40,10 +41,25 @@ class LiveBroker(Broker):
             slippage_bps=100,
         )
 
+        safety = evaluate_swap_build(swap)
+
+        if not safety.get("approved"):
+            return broker_response(
+                ok=False,
+                message="Live buy blocked by execution safety.",
+                data={
+                    "swap": swap,
+                    "safety": safety,
+                },
+            )
+
         return broker_response(
-            ok=swap.get("ok", False),
-            message="Live swap built but not signed or sent.",
-            data=swap,
+            ok=True,
+            message="Live swap built and approved by safety checks, but not signed or sent.",
+            data={
+                "swap": swap,
+                "safety": safety,
+            },
         )
 
     def sell(self, trade_id: int, reason: str = "MANUAL_SELL"):
@@ -62,6 +78,7 @@ class LiveBroker(Broker):
 
     def get_positions(self):
         wallet = live_wallet_status()
+
         return broker_response(
             ok=True,
             message="Live wallet positions loaded.",

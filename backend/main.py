@@ -6,6 +6,7 @@ from core.adaptive_learning import apply_learning_to_signal
 from core.alpha_brain import score_coin
 from core.alpha_engine import start_alpha_engine, stop_alpha_engine, get_alpha_engine_state
 from core.jupiter_service import quote_sol_to_token
+from core.live_swap_builder import build_swap_transaction
 from core.learning import get_learning_report
 from core.learning_memory import save_learning_memory, load_learning_memory
 from core.paper_trader import (
@@ -358,6 +359,25 @@ def live_jupiter_quote(payload: dict):
         }
 
     return quote_sol_to_token(
+        output_mint=output_mint,
+        sol_amount=sol_amount,
+        slippage_bps=slippage_bps,
+    )
+
+
+@app.post("/live/jupiter/build-swap")
+def live_jupiter_build_swap(payload: dict):
+    output_mint = payload.get("output_mint")
+    sol_amount = payload.get("sol_amount", 0.01)
+    slippage_bps = payload.get("slippage_bps", 100)
+
+    if not output_mint:
+        return {
+            "ok": False,
+            "error": "output_mint is required",
+        }
+
+    return build_swap_transaction(
         output_mint=output_mint,
         sol_amount=sol_amount,
         slippage_bps=slippage_bps,
