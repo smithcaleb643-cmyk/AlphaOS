@@ -1,92 +1,76 @@
-from core.broker import Broker, broker_response
-from core.live_wallet_reader import live_wallet_status
-from core.live_swap_builder import build_swap_transaction
-from core.live_execution_safety import evaluate_swap_build
+def safe_float(value, default=0):
+    try:
+        return float(value or default)
+    except Exception:
+        return default
 
 
-class LiveBroker(Broker):
-    def __init__(self):
-        self.enabled = False
-        self.auto_trading_enabled = False
-        self.max_trade_sol = 0.01
-
-    def buy(self, signal: dict):
-        if not self.enabled:
-            return broker_response(
-                ok=False,
-                message="Live broker is disabled.",
-                data={"signal": signal},
-            )
-
-        output_mint = signal.get("token_address")
-        sol_amount = float(signal.get("sol_amount") or self.max_trade_sol)
-
-        if not output_mint:
-            return broker_response(
-                ok=False,
-                message="Live buy blocked: token_address missing.",
-                data={"signal": signal},
-            )
-
-        if sol_amount > self.max_trade_sol:
-            return broker_response(
-                ok=False,
-                message=f"Live buy blocked: sol_amount exceeds max {self.max_trade_sol}.",
-                data={"sol_amount": sol_amount},
-            )
-
-        swap = build_swap_transaction(
-            output_mint=output_mint,
-            sol_amount=sol_amount,
-            slippage_bps=100,
-        )
-
-        safety = evaluate_swap_build(swap)
-
-        if not safety.get("approved"):
-            return broker_response(
-                ok=False,
-                message="Live buy blocked by execution safety.",
-                data={
-                    "swap": swap,
-                    "safety": safety,
-                },
-            )
-
-        return broker_response(
-            ok=True,
-            message="Live swap built and approved by safety checks, but not signed or sent.",
-            data={
-                "swap": swap,
-                "safety": safety,
-            },
-        )
-
-    def sell(self, trade_id: int, reason: str = "MANUAL_SELL"):
-        return broker_response(
-            ok=False,
-            message="Live selling is not enabled yet.",
-            data={"trade_id": trade_id, "reason": reason},
-        )
-
-    def get_balance(self):
-        return broker_response(
-            ok=True,
-            message="Live wallet status loaded.",
-            data=live_wallet_status(),
-        )
-
-    def get_positions(self):
-        wallet = live_wallet_status()
-
-        return broker_response(
-            ok=True,
-            message="Live wallet positions loaded.",
-            data={
-                "tokens": wallet.get("tokens", []),
-                "token_count": wallet.get("token_count", 0),
-            },
-        )
+def quote_price_impact_percent(quote):
+    return safe_float(quote.get("priceImpactPct", 0)) * 100
 
 
-live_broker = LiveBroker()
+def quote_output_amount(quote):
+    return safe_float(quote.get("outAmount", 0))
+
+
+def quote_input_amount(quote):
+    return safe_float(quote.get("inAmount", 0))
+
+
+def evaluate_live_quote(quote, sol_amount=0.01):
+    warnings = []
+
+    if not quote:
+        return {
+            "approved": False,
+            "reason": "No Jupiter quote returned.",
+            "warnings": ["Missing quote."],
+        }
+
+    price_impact = quote_price_impact_percent(quote)
+    out_amount = quote_output_amount(quote)
+    in_amount = quote_input_amount(quote)
+
+    if out_amount <= 0:
+        warnings.append("Jupiter quote output amount is zero.")
+
+    if in_amount <= 0:
+        warnings.append("Jupiter quote input amount is zero.")
+
+    if price_impact > 5:
+        warnings.append(f"Price impact too high: {round(price_impact, 2)}%.")
+
+    if sol_amount > 0.01:
+        warnings.append("Trade size exceeds current live testing limit of 0.01 SOL.")
+
+    approved = len(warnings) == 0
+
+    return {
+        "approved": approved,
+        "reason": "Approved for live swap build." if approved else "Blocked by live execution safety.",
+        "price_impact_percent": round(price_impact, 4),
+        "input_amount": in_amount,
+        "output_amount": out_amount,
+        "warnings": warnings,
+    }
+
+
+def evaluate_swap_build(swap_result):
+    if not swap_result.get("ok"):
+        return {
+            "approved": False,
+            "reason": "Swap build failed.",
+            "warnings": [swap_result.get("error", "Unknown swap build error.")],
+        }
+
+    if not swap_result.get("swap_transaction"):
+        return {
+            "approved": False,
+            "reason": "Swap transaction missing.",
+            "warnings": ["Jupiter did not return a swapTransaction."],
+        }
+
+    quote = swap_result.get("quote", {})
+    sol_amount = safe_float(swap_result.get("sol_amount", 0.01))
+
+    return evaluate_live_quote(quote, sol_amount=sol_amount)

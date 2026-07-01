@@ -2,3 +2,6 @@ __pycache__/
 *.pyc
 data/backups/
 *.tmp
+secrets/
+*.keypair.json
+.env

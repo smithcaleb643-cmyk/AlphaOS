@@ -1,5 +1,6 @@
 import requests
 
+from core.alpha_wallet_manager import get_alpha_wallet_address
 from core.jupiter_service import (
     JUPITER_QUOTE_URL,
     SOL_MINT,
@@ -8,8 +9,6 @@ from core.jupiter_service import (
 from core.live_wallet_reader import read_sol_balance
 
 JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap"
-
-ALPHA_TEST_WALLET = "E6js7TDTJm13uH79zQCBHMs9CKfwm4hjyXSDGurULkwY"
 
 MIN_SOL_BUFFER = 0.003
 
@@ -59,8 +58,10 @@ def check_wallet_has_enough_sol(wallet_address, sol_amount):
     }
 
 
-def build_swap_transaction(output_mint, sol_amount=0.01, slippage_bps=100, wallet_address=ALPHA_TEST_WALLET):
+def build_swap_transaction(output_mint, sol_amount=0.01, slippage_bps=100, wallet_address=None):
     try:
+        wallet_address = wallet_address or get_alpha_wallet_address()
+
         balance_check = check_wallet_has_enough_sol(wallet_address, sol_amount)
 
         if not balance_check.get("approved"):
@@ -110,7 +111,6 @@ def build_swap_transaction(output_mint, sol_amount=0.01, slippage_bps=100, walle
     except Exception as error:
         return {
             "ok": False,
-            "wallet_address": wallet_address,
             "output_mint": output_mint,
             "sol_amount": sol_amount,
             "slippage_bps": slippage_bps,

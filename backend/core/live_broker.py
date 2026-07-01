@@ -1,6 +1,8 @@
 from core.broker import Broker, broker_response
 from core.live_wallet_reader import live_wallet_status
 from core.live_swap_builder import build_swap_transaction
+from core.live_execution_safety import evaluate_swap_build
+from core.live_risk_guard import approve_live_buy
 
 
 class LiveBroker(Broker):
@@ -17,6 +19,9 @@ class LiveBroker(Broker):
                 data={"signal": signal},
             )
 
+        wallet = live_wallet_status()
+        sol_balance = float(wallet.get("sol_balance") or 0)
+
         output_mint = signal.get("token_address")
         sol_amount = float(signal.get("sol_amount") or self.max_trade_sol)
 
@@ -27,11 +32,20 @@ class LiveBroker(Broker):
                 data={"signal": signal},
             )
 
-        if sol_amount > self.max_trade_sol:
+        risk = approve_live_buy(
+            sol_amount=sol_amount,
+            sol_balance=sol_balance,
+        )
+
+        if not risk.get("approved"):
             return broker_response(
                 ok=False,
-                message=f"Live buy blocked: sol_amount exceeds max {self.max_trade_sol}.",
-                data={"sol_amount": sol_amount},
+                message="Live buy blocked by live risk guard.",
+                data={
+                    "risk": risk,
+                    "wallet": wallet,
+                    "signal": signal,
+                },
             )
 
         swap = build_swap_transaction(
@@ -40,10 +54,27 @@ class LiveBroker(Broker):
             slippage_bps=100,
         )
 
+        safety = evaluate_swap_build(swap)
+
+        if not safety.get("approved"):
+            return broker_response(
+                ok=False,
+                message="Live buy blocked by execution safety.",
+                data={
+                    "swap": swap,
+                    "safety": safety,
+                    "risk": risk,
+                },
+            )
+
         return broker_response(
-            ok=swap.get("ok", False),
-            message="Live swap built but not signed or sent.",
-            data=swap,
+            ok=True,
+            message="Live swap built and approved, but not signed or sent.",
+            data={
+                "swap": swap,
+                "safety": safety,
+                "risk": risk,
+            },
         )
 
     def sell(self, trade_id: int, reason: str = "MANUAL_SELL"):
@@ -62,6 +93,7 @@ class LiveBroker(Broker):
 
     def get_positions(self):
         wallet = live_wallet_status()
+
         return broker_response(
             ok=True,
             message="Live wallet positions loaded.",

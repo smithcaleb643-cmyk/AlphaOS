@@ -2,6 +2,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from core.accounting_auditor import run_accounting_audit
+from core.alpha_wallet_manager import get_alpha_wallet_status
+from core.live_decision_report import build_live_decision_report
 from core.adaptive_learning import apply_learning_to_signal
 from core.alpha_brain import score_coin
 from core.alpha_engine import start_alpha_engine, stop_alpha_engine, get_alpha_engine_state
@@ -344,6 +346,16 @@ def live_wallet_status_endpoint():
             "message": "Live wallet reader failed to load.",
             "error": str(error),
         }
+
+
+@app.get("/live/alpha-wallet/status")
+def live_alpha_wallet_status():
+    return get_alpha_wallet_status()
+
+
+@app.post("/live/decision/report")
+def live_decision_report(payload: dict):
+    return build_live_decision_report(payload)
 
 
 @app.post("/live/jupiter/quote")
