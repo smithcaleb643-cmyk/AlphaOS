@@ -1,5 +1,8 @@
 import { useEffect, useState } from "react";
+import LiveTradeJournalPanel from "./components/LiveTradeJournalPanel";
 import AlphaLiveChart from "./AlphaLiveChart";
+import LivePortfolioPanel from "./components/LivePortfolioPanel";
+import LiveWalletCard from "./components/LiveWalletCard";
 import "./App.css";
 
 const API = "http://127.0.0.1:8000";
@@ -93,22 +96,31 @@ function PlaceholderPage({ title, subtitle, items }) {
 
 function App() {
   const [currentPage, setCurrentPage] = useState("Dashboard");
-  const [coins, setCoins] = useState(defaultWatchlist);
-  const [selectedCoin, setSelectedCoin] = useState(defaultWatchlist[0]);
-  const [memory, setMemory] = useState([]);
-  const [memorySearch, setMemorySearch] = useState("");
-  const [memoryFilter, setMemoryFilter] = useState("ALL");
-  const [sortByScore, setSortByScore] = useState(true);
-  const [autoRefresh, setAutoRefresh] = useState(false);
-  const [showDetails, setShowDetails] = useState(false);
-  const [isScanning, setIsScanning] = useState(false);
-  const [isLoadingMemory, setIsLoadingMemory] = useState(false);
+const [coins, setCoins] = useState(defaultWatchlist);
+const [selectedCoin, setSelectedCoin] = useState(defaultWatchlist[0]);
+const [memory, setMemory] = useState([]);
+const [memorySearch, setMemorySearch] = useState("");
+const [memoryFilter, setMemoryFilter] = useState("ALL");
+const [sortByScore, setSortByScore] = useState(true);
+const [autoRefresh, setAutoRefresh] = useState(false);
+const [showDetails, setShowDetails] = useState(false);
+const [isScanning, setIsScanning] = useState(false);
+const [isLoadingMemory, setIsLoadingMemory] = useState(false);
 
-  const [paperPerformance, setPaperPerformance] = useState(null);
-  const [paperState, setPaperState] = useState(null);
-  const [learningState, setLearningState] = useState(null);
-  const [engineState, setEngineState] = useState(null);
-  const [systemHealth, setSystemHealth] = useState(null);
+const [paperPerformance, setPaperPerformance] = useState(null);
+const [paperState, setPaperState] = useState(null);
+const [learningState, setLearningState] = useState(null);
+const [engineState, setEngineState] = useState(null);
+const [systemHealth, setSystemHealth] = useState(null);
+
+const [liveWallet, setLiveWallet] = useState(null);
+
+const [livePortfolio, setLivePortfolio] = useState(null);
+
+const [liveJournal, setLiveJournal] = useState({
+  count: 0,
+  trades: [],
+});
 
   async function loadMemory() {
     setIsLoadingMemory(true);
@@ -131,20 +143,22 @@ function App() {
   }
 
   async function loadPaperTrader() {
-    try {
-      const perf = await fetch(`${API}/paper/performance`).then((r) => r.json());
-      const state = await fetch(`${API}/paper/state`).then((r) => r.json());
-      const learning = await fetch(`${API}/paper/learning`).then((r) => r.json());
-      const engine = await fetch(`${API}/engine/state`).then((r) => r.json());
+  try {
+    const perf = await fetch(`${API}/paper/performance`).then((r) => r.json());
+    const state = await fetch(`${API}/paper/state`).then((r) => r.json());
+    const learning = await fetch(`${API}/paper/learning`).then((r) => r.json());
+    const engine = await fetch(`${API}/engine/state`).then((r) => r.json());
 
-      setPaperPerformance(perf);
-      setPaperState(state);
-      setLearningState(learning);
-      setEngineState(engine);
-    } catch (error) {
-      console.error("Paper trader load failed:", error);
-    }
-  }async function loadSystemHealth() {
+    setPaperPerformance(perf);
+    setPaperState(state);
+    setLearningState(learning);
+    setEngineState(engine);
+  } catch (error) {
+    console.error("Paper trader load failed:", error);
+  }
+}
+
+async function loadSystemHealth() {
   try {
     const response = await fetch(`${API}/system/health`);
     const data = await response.json();
@@ -154,108 +168,168 @@ function App() {
   }
 }
 
-  async function startAlphaEngine() {
-    try {
-      await fetch(`${API}/engine/start`, { method: "POST" });
-      await loadPaperTrader();
-    } catch (error) {
-      console.error("Engine start failed:", error);
-      alert("Could not start Alpha Engine.");
+async function loadLiveWallet() {
+  try {
+    const response = await fetch(`${API}/live/wallet/status`);
+    const data = await response.json();
+    setLiveWallet(data);
+  } catch (error) {
+    console.error("Live wallet load failed:", error);
+  }
+}
+
+async function loadLiveTradeJournal() {
+  try {
+    const response = await fetch(`${API}/live/trade-journal`);
+    const data = await response.json();
+    setLiveJournal(data);
+  } catch (error) {
+    console.error("Live trade journal load failed:", error);
+  }
+}
+
+async function loadLivePortfolio() {
+  try {
+    const response = await fetch(`${API}/live/portfolio`);
+    const data = await response.json();
+    setLivePortfolio(data);
+  } catch (error) {
+    console.error("Live portfolio load failed:", error);
+  }
+}
+
+async function startAlphaEngine() {
+  try {
+    await fetch(`${API}/engine/start`, { method: "POST" });
+
+    await loadPaperTrader();
+    await loadLiveWallet();
+    await loadLivePortfolio();
+    await loadLiveTradeJournal();
+
+  } catch (error) {
+    console.error("Engine start failed:", error);
+    alert("Could not start Alpha Engine.");
+  }
+}
+
+async function stopAlphaEngine() {
+  try {
+    await fetch(`${API}/engine/stop`, { method: "POST" });
+
+    await loadPaperTrader();
+    await loadLiveWallet();
+    await loadLivePortfolio();
+    await loadLiveTradeJournal();
+
+  } catch (error) {
+    console.error("Engine stop failed:", error);
+    alert("Could not stop Alpha Engine.");
+  }
+}
+
+async function reviewTrade(tradeId) {
+  try {
+    const response = await fetch(`${API}/paper/trade/${tradeId}/review`, {
+      method: "POST",
+    });
+
+    const data = await response.json();
+    console.log("REVIEW RESPONSE:", data);
+
+    await loadPaperTrader();
+  } catch (error) {
+    console.error("Review failed:", error);
+    alert("Review failed. Check backend terminal.");
+  }
+}
+
+async function sellTrade(tradeId) {
+  try {
+    const response = await fetch(`${API}/paper/trade/${tradeId}/sell`, {
+      method: "POST",
+    });
+
+    const data = await response.json();
+    console.log("SELL RESPONSE:", data);
+
+    await loadPaperTrader();
+  } catch (error) {
+    console.error("Sell failed:", error);
+    alert("Sell failed. Check backend terminal.");
+  }
+}
+
+async function runScan() {
+  setIsScanning(true);
+
+  try {
+    const response = await fetch(`${API}/scan`);
+    const data = await response.json();
+
+    console.log("LIVE SCAN:", data);
+
+    if (!data.results || data.results.length === 0) {
+      alert("Alpha scanned but found no live coins yet.");
+      setIsScanning(false);
+      return;
     }
+
+    setCoins(data.results);
+    setSelectedCoin(data.results[0]);
+
+    await loadMemory();
+    await loadPaperTrader();
+    await loadLiveWallet();
+    await loadLivePortfolio();
+    await loadLiveTradeJournal();
+
+  } catch (error) {
+    console.error(error);
+    alert("Alpha backend is not responding.");
   }
 
-  async function stopAlphaEngine() {
-    try {
-      await fetch(`${API}/engine/stop`, { method: "POST" });
-      await loadPaperTrader();
-    } catch (error) {
-      console.error("Engine stop failed:", error);
-      alert("Could not stop Alpha Engine.");
-    }
-  }
-
-  async function reviewTrade(tradeId) {
-    try {
-      const response = await fetch(`${API}/paper/trade/${tradeId}/review`, {
-        method: "POST",
-      });
-
-      const data = await response.json();
-      console.log("REVIEW RESPONSE:", data);
-
-      await loadPaperTrader();
-    } catch (error) {
-      console.error("Review failed:", error);
-      alert("Review failed. Check backend terminal.");
-    }
-  }
-
-  async function sellTrade(tradeId) {
-    try {
-      const response = await fetch(`${API}/paper/trade/${tradeId}/sell`, {
-        method: "POST",
-      });
-
-      const data = await response.json();
-      console.log("SELL RESPONSE:", data);
-
-      await loadPaperTrader();
-    } catch (error) {
-      console.error("Sell failed:", error);
-      alert("Sell failed. Check backend terminal.");
-    }
-  }
-
-  async function runScan() {
-    setIsScanning(true);
-
-    try {
-      const response = await fetch(`${API}/scan`);
-      const data = await response.json();
-
-      console.log("LIVE SCAN:", data);
-
-      if (!data.results || data.results.length === 0) {
-        alert("Alpha scanned but found no live coins yet.");
-        setIsScanning(false);
-        return;
-      }
-
-      setCoins(data.results);
-      setSelectedCoin(data.results[0]);
-
-      await loadMemory();
-      await loadPaperTrader();
-    } catch (error) {
-      console.error(error);
-      alert("Alpha backend is not responding.");
-    }
-
-    setIsScanning(false);
-  }
+  setIsScanning(false);
+}
 
   useEffect(() => {
   loadMemory();
   loadPaperTrader();
   loadSystemHealth();
+  loadLiveWallet();
+  loadLivePortfolio();
+  loadLiveTradeJournal();
 
   const timer = setInterval(() => {
     loadPaperTrader();
     loadSystemHealth();
   }, 1000);
 
-  return () => clearInterval(timer);
+  const walletTimer = setInterval(() => {
+    loadLiveWallet();
+  }, 10000);
+
+  const journalTimer = setInterval(() => {
+    loadLiveTradeJournal();
+    loadLivePortfolio();
+  }, 3000);
+
+  return () => {
+    clearInterval(timer);
+    clearInterval(walletTimer);
+    clearInterval(journalTimer);
+  };
 }, []);
 
-  useEffect(() => {
-    if (!autoRefresh) return;
+useEffect(() => {
+  if (!autoRefresh) return;
 
-    const timer = setInterval(() => {
-      runScan();
-    }, 15000);
+  const timer = setInterval(() => {
+    runScan();
+  }, 15000);
 
-    return () => clearInterval(timer);
-  }, [autoRefresh]);
+  return () => clearInterval(timer);
+}, [autoRefresh]);
 
   const latestMemoryByCoin = Object.values(
     memory.reduce((acc, scan) => {
@@ -669,6 +743,12 @@ const learning = health.learning || {};
           </p>
         </div>
       </section>
+
+      <LiveWalletCard liveWallet={liveWallet} />
+
+      <LivePortfolioPanel livePortfolio={livePortfolio} />
+
+      <LiveTradeJournalPanel liveJournal={liveJournal} />
 
       <section className="brain-accounting-card">
         <div className="section-title">
