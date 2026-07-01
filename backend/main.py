@@ -8,7 +8,7 @@ from core.adaptive_learning import apply_learning_to_signal
 from core.live_transaction_signer import sign_swap_transaction
 from core.live_transaction_sender import send_signed_transaction
 from core.live_sell_executor import execute_live_sell
-from core.live_trade_executor import execute_live_buy
+
 from core.live_trade_journal import load_live_trade_journal
 from core.live_portfolio import get_live_portfolio
 from core.live_alpha_controller import (
@@ -449,7 +449,11 @@ def _normalize_trade_payload(payload: dict):
 def live_execute_buy_endpoint(payload: dict):
     try:
         from core.live_execution.executor import execute_live_buy
-        return execute_live_buy(**_normalize_trade_payload(payload))
+
+        normalized = _normalize_trade_payload(payload)
+
+        return execute_live_buy(normalized)
+
     except Exception as e:
         return {
             "ok": False,

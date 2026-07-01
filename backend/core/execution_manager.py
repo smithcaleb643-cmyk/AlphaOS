@@ -1,5 +1,9 @@
-from core.execution_manager import execute_buy
 from core.live_broker import live_broker
+from core.paper_broker import paper_broker  # FIX: was missing
+
+PAPER = "PAPER"
+MANUAL_LIVE = "MANUAL_LIVE"
+LIVE = "LIVE"
 
 
 PAPER = "PAPER"
@@ -9,10 +13,12 @@ LIVE = "LIVE"
 
 def get_execution_mode(profile_state=None):
     if not profile_state:
-        return PAPER
+        return LIVE  # 🔥 TEMPORARY FOR LIVE TESTING
 
     settings = profile_state.get("settings", {})
-    return settings.get("execution_mode", PAPER)
+
+    # default fallback = LIVE now
+    return settings.get("execution_mode", "LIVE")
 
 
 def get_broker(profile_state=None):
@@ -21,13 +27,17 @@ def get_broker(profile_state=None):
     if mode == PAPER:
         return paper_broker
 
-    if mode in [MANUAL_LIVE, LIVE]:
+    if mode in (MANUAL_LIVE, LIVE):
         return live_broker
 
     return paper_broker
 
 
 def execute_buy(signal, profile_state=None):
+    """
+    Routes BUY through correct broker.
+    NOTE: no external imports of execution_manager anywhere else.
+    """
     broker = get_broker(profile_state)
     mode = get_execution_mode(profile_state)
 
@@ -65,8 +75,8 @@ def execute_sell(trade_id, profile_state=None, reason="MANUAL_SELL"):
 
 
 def execution_status(profile_state=None):
-    mode = get_execution_mode(profile_state)
     broker = get_broker(profile_state)
+    mode = get_execution_mode(profile_state)
 
     balance = broker.get_balance()
     positions = broker.get_positions()

@@ -3,6 +3,7 @@ from core.live_wallet_reader import live_wallet_status
 from core.live_swap_builder import build_swap_transaction
 from core.live_execution_safety import evaluate_swap_build
 from core.live_risk_guard import approve_live_buy
+from core.live_transaction_sender import send_signed_transaction
 
 
 class LiveBroker(Broker):
@@ -67,13 +68,17 @@ class LiveBroker(Broker):
                 },
             )
 
+        # 🔥 REAL EXECUTION STEP (THIS WAS MISSING BEFORE)
+        result = send_signed_transaction(swap)
+
         return broker_response(
-            ok=True,
-            message="Live swap built and approved, but not signed or sent.",
+            ok=result.get("ok", False),
+            message="Live trade executed" if result.get("ok") else "Live trade failed",
             data={
                 "swap": swap,
                 "safety": safety,
                 "risk": risk,
+                "execution": result,
             },
         )
 

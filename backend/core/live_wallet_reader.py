@@ -1,4 +1,5 @@
 import requests
+import time
 
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
 
@@ -10,8 +11,9 @@ TOKEN_PROGRAMS = [
 ]
 
 
-def lamports_to_sol(lamports):
-    return lamports / 1_000_000_000
+_wallet_cache = None
+_wallet_cache_time = 0
+CACHE_SECONDS = 5
 
 
 def rpc_call(method, params=None):
@@ -30,27 +32,19 @@ def rpc_call(method, params=None):
 def read_sol_balance(wallet_address=ALPHA_TEST_WALLET):
     try:
         data = rpc_call("getBalance", [wallet_address])
-
-        if "error" in data:
-            raise Exception(data["error"])
-
         lamports = data["result"]["value"]
 
         return {
             "ok": True,
             "connected": True,
-            "wallet_address": wallet_address,
-            "rpc_url": SOLANA_RPC_URL,
             "lamports": lamports,
-            "sol_balance": lamports_to_sol(lamports),
+            "sol_balance": lamports / 1_000_000_000,
         }
 
     except Exception as error:
         return {
             "ok": False,
             "connected": False,
-            "wallet_address": wallet_address,
-            "rpc_url": SOLANA_RPC_URL,
             "error": str(error),
         }
 
@@ -58,15 +52,8 @@ def read_sol_balance(wallet_address=ALPHA_TEST_WALLET):
 def read_token_accounts_for_program(wallet_address, program_id):
     data = rpc_call(
         "getTokenAccountsByOwner",
-        [
-            wallet_address,
-            {"programId": program_id},
-            {"encoding": "jsonParsed"},
-        ],
+        [wallet_address, {"programId": program_id}, {"encoding": "jsonParsed"}],
     )
-
-    if "error" in data:
-        raise Exception(data["error"])
 
     tokens = []
 
@@ -75,66 +62,57 @@ def read_token_accounts_for_program(wallet_address, program_id):
         token_amount = info.get("tokenAmount", {})
 
         amount_raw = token_amount.get("amount", "0")
-        decimals = int(token_amount.get("decimals", 0) or 0)
-        ui_amount = float(token_amount.get("uiAmount") or 0)
 
-        if int(amount_raw or 0) <= 0:
+        if int(amount_raw) <= 0:
             continue
 
         tokens.append({
             "mint": info.get("mint"),
-            "amount": ui_amount,
-            "amount_raw": amount_raw,
-            "decimals": decimals,
-            "token_account": account.get("pubkey"),
-            "program_id": program_id,
+            "amount": float(token_amount.get("uiAmount") or 0),
         })
 
     return tokens
 
 
 def read_token_accounts(wallet_address=ALPHA_TEST_WALLET):
-    try:
-        all_tokens = []
+    all_tokens = []
 
-        for program_id in TOKEN_PROGRAMS:
-            try:
-                all_tokens.extend(
-                    read_token_accounts_for_program(wallet_address, program_id)
-                )
-            except Exception as error:
-                print("TOKEN PROGRAM READ FAILED:", program_id, error)
+    for program_id in TOKEN_PROGRAMS:
+        try:
+            all_tokens.extend(
+                read_token_accounts_for_program(wallet_address, program_id)
+            )
+        except Exception as error:
+            print("TOKEN PROGRAM READ FAILED:", error)
 
-        return {
-            "ok": True,
-            "connected": True,
-            "wallet_address": wallet_address,
-            "token_count": len(all_tokens),
-            "tokens": all_tokens,
-        }
-
-    except Exception as error:
-        return {
-            "ok": False,
-            "connected": False,
-            "wallet_address": wallet_address,
-            "error": str(error),
-        }
+    return {
+        "token_count": len(all_tokens),
+        "tokens": all_tokens,
+    }
 
 
 def live_wallet_status():
+    global _wallet_cache, _wallet_cache_time
+
+    now = time.time()
+
+    if _wallet_cache and (now - _wallet_cache_time) < CACHE_SECONDS:
+        return _wallet_cache
+
     balance = read_sol_balance()
     tokens = read_token_accounts()
 
-    return {
-        "ok": balance.get("ok", False),
-        "connected": balance.get("connected", False),
+    result = {
+        "ok": balance.get("ok"),
+        "connected": balance.get("connected"),
         "wallet_address": ALPHA_TEST_WALLET,
-        "rpc_url": SOLANA_RPC_URL,
         "sol_balance": balance.get("sol_balance", 0),
         "lamports": balance.get("lamports", 0),
         "token_count": tokens.get("token_count", 0),
         "tokens": tokens.get("tokens", []),
-        "balance_status": balance,
-        "token_status": tokens,
     }
+
+    _wallet_cache = result
+    _wallet_cache_time = now
+
+    return result

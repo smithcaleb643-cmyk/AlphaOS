@@ -474,7 +474,7 @@ def alpha_engine_loop():
             else:
                 engine_state["message"] = f"Engine error: {error}"
 
-        time.sleep(1)
+        time.sleep(1.5)
 
 
 def start_alpha_engine():
