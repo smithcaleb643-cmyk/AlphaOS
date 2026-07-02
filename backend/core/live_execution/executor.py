@@ -41,7 +41,7 @@ def execute_live_buy(payload: dict):
             }
 
         # STEP 3: SEND TX
-        sent = send_signed_transaction(signed)
+        sent = send_signed_transaction(signed["signed_transaction"])
 
         return sent
 

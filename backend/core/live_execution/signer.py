@@ -1,16 +1,15 @@
-import base64
-import json
+from solders.keypair import Keypair
+from solders.transaction import VersionedTransaction
 
-def sign_swap(swap_tx):
+def sign_swap(result, keypair: Keypair):
     try:
-        # pretend serialization layer (placeholder for real keypair signing)
-        serialized = json.dumps(swap_tx)
+        tx = result["transaction"]
 
-        encoded = base64.b64encode(serialized.encode()).decode()
+        signed_tx = VersionedTransaction(tx.message, [keypair])
 
         return {
             "ok": True,
-            "signed_transaction": encoded
+            "signed_transaction": signed_tx
         }
 
     except Exception as e:
