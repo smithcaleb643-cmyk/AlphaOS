@@ -3,22 +3,21 @@ import requests
 QUOTE_URL = "https://api.jup.ag/swap/v1/quote"
 SWAP_URL = "https://api.jup.ag/swap/v1/swap"
 
-WALLET = "EFHxUKFpWTfgy64Q6rdsieDYTSgVVbfP1wqg5WaEEise"
 
-
-def build_swap(token_address, amount, slippage_bps):
+def build_swap(token_address, amount, slippage_bps, user_wallet):
     try:
-        input_mint = "So11111111111111111111111111111111111111112"
+        SOL_MINT = "So11111111111111111111111111111111111111112"
 
-        # STEP 1 — GET QUOTE
+        # -----------------------------
+        # STEP 1: GET QUOTE
+        # -----------------------------
         quote_res = requests.get(QUOTE_URL, params={
-            "inputMint": input_mint,
+            "inputMint": SOL_MINT,
             "outputMint": token_address,
             "amount": str(int(float(amount) * 1_000_000_000)),
             "slippageBps": slippage_bps
         }, timeout=10)
 
-        # IMPORTANT: Jupiter returns useful error text on 400/422
         if quote_res.status_code != 200:
             return {
                 "ok": False,
@@ -28,23 +27,23 @@ def build_swap(token_address, amount, slippage_bps):
 
         quote = quote_res.json()
 
-        # STEP 2 — VALIDATE QUOTE (IMPORTANT FIX)
-        if not quote or "routePlan" not in quote:
+        if not quote:
             return {
                 "ok": False,
                 "stage": "BAD_QUOTE",
-                "raw": quote
+                "error": "Empty quote response"
             }
 
-        # STEP 3 — SWAP REQUEST (FIXED FORMAT)
+        # -----------------------------
+        # STEP 2: BUILD SWAP
+        # -----------------------------
         swap_res = requests.post(SWAP_URL, json={
             "quoteResponse": quote,
-            "userPublicKey": WALLET,
-            "wrapAndUnwrapSol": True,
-            "dynamicComputeUnitLimit": True,
-            "dynamicSlippage": True
+            "userPublicKey": user_wallet,
+            "wrapAndUnwrapSol": True
         }, timeout=10)
 
+        # IMPORTANT: DO NOT TRY TO PARSE IF FAILED
         if swap_res.status_code != 200:
             return {
                 "ok": False,
@@ -54,17 +53,24 @@ def build_swap(token_address, amount, slippage_bps):
 
         swap = swap_res.json()
 
-        # STEP 4 — VALIDATE RESPONSE
-        if "swapTransaction" not in swap:
+        # -----------------------------
+        # STEP 3: EXTRACT TX (STRICT)
+        # -----------------------------
+        tx = swap.get("swapTransaction")
+
+        if not tx:
             return {
                 "ok": False,
                 "stage": "NO_SWAP_TX",
-                "raw": swap
+                "error": swap
             }
 
+        # -----------------------------
+        # SUCCESS
+        # -----------------------------
         return {
             "ok": True,
-            "swap_transaction": swap["swapTransaction"]
+            "swapTransaction": tx
         }
 
     except Exception as e:

@@ -1,13 +1,13 @@
 import threading
 import time
 from datetime import datetime
+from core.control_brain import control_brain
 
 from core.alpha_brain import score_coin
 from core.adaptive_learning import apply_learning_to_signal
 from core.paper_trader import get_paper_state
 from core.trade_manager import update_open_trades
-from core.execution_manager import execute_buy
-from core.risk_manager import approve_trade
+
 from services.market_service import scan_live_market, get_market_summary
 
 
@@ -219,38 +219,22 @@ def build_opportunities_from_scan(coins):
     return opportunities, scanner_price_lookup
 
 
+from core.control_brain import control_brain
+
 def try_execute_opportunity(opportunity):
-    state = get_paper_state()
-    approval = approve_trade(opportunity, state)
-    opportunity["risk_approval"] = approval
 
-    if not approval.get("approved"):
-        return {
-            "created": False,
-            "blocked": True,
-            "reason": approval.get("reason"),
-            "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
-            "score": opportunity.get("score"),
-        }
-
-    response = execute_buy(opportunity, profile_state=state)
-
-    if response.get("ok"):
-        return {
-            "created": True,
-            "blocked": False,
-            "reason": response.get("message"),
-            "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
-            "score": opportunity.get("score"),
-        }
-
-    return {
-        "created": False,
-        "blocked": True,
-        "reason": response.get("message"),
-        "coin": opportunity.get("symbol") or opportunity.get("coin_name"),
+    signal = {
+        "token_address": opportunity.get("token_address"),
         "score": opportunity.get("score"),
+        "risk_score": opportunity.get("risk_score"),
+        "probability": opportunity.get("probability"),
+        "price_usd": opportunity.get("price_usd"),
+        "symbol": opportunity.get("symbol") or opportunity.get("coin_name"),
     }
+
+    result = control_brain.execute(signal)
+
+    return result
 
 
 
@@ -392,21 +376,17 @@ def run_discovery_scan():
     for opportunity in ranked:
         result = try_execute_opportunity(opportunity)
 
-        if result["created"]:
+        if result.get("ok"):
             trades_created += 1
-            continue
-
-        if result["blocked"]:
+        else:
             trades_blocked += 1
 
             if len(blocked_reasons) < 10:
-                blocked_reasons.append(
-                    {
-                        "coin": result.get("coin"),
-                        "score": result.get("score"),
-                        "reason": result.get("reason"),
-                    }
-                )
+                blocked_reasons.append({
+                    "coin": result.get("signal", {}).get("symbol"),
+                    "score": result.get("signal", {}).get("score"),
+                    "reason": result.get("reason"),
+                })
 
     if scanner_price_lookup:
         update_open_trades(scanner_price_lookup)
@@ -416,7 +396,6 @@ def run_discovery_scan():
     engine_state["last_trades_blocked"] = trades_blocked
     engine_state["last_blocked_reasons"] = blocked_reasons
     engine_state["last_discovery_scan_at"] = now_iso()
-    engine_state["message"] = "Alpha Engine running"
 
     return {
         "coins": coins,
@@ -427,29 +406,16 @@ def run_discovery_scan():
     }
 
 
-def update_scheduler_state(last_price_refresh, last_discovery_scan):
-    current = time.time()
-
-    engine_state["next_price_refresh_in"] = max(
-        0,
-        int(PRICE_REFRESH_SECONDS - (current - last_price_refresh)),
-    )
-
-    if discovery_is_in_cooldown():
-        engine_state["next_discovery_scan_in"] = engine_state["discovery_cooldown_remaining"]
-    else:
-        engine_state["next_discovery_scan_in"] = max(
-            0,
-            int(DISCOVERY_SCAN_SECONDS - (current - last_discovery_scan)),
-        )
-
-
 def alpha_engine_loop():
-    last_price_refresh = 0
-    last_discovery_scan = 0
+
+    last_price_refresh = time.time()
+    last_discovery_scan = time.time()
 
     while engine_state["running"]:
+
         try:
+            print("🧠 ENGINE LOOP ACTIVE - cycle", engine_state["cycles"])
+
             current = time.time()
 
             if current - last_price_refresh >= PRICE_REFRESH_SECONDS:
@@ -461,18 +427,13 @@ def alpha_engine_loop():
                 last_discovery_scan = current
 
             engine_state["cycles"] += 1
-            update_scheduler_state(last_price_refresh, last_discovery_scan)
+            
 
             if not discovery_is_in_cooldown():
                 engine_state["message"] = "Alpha Engine running"
 
         except Exception as error:
             print("ENGINE ERROR:", error)
-
-            if is_rate_limit_error(error):
-                start_discovery_cooldown("rate limit")
-            else:
-                engine_state["message"] = f"Engine error: {error}"
 
         time.sleep(1.5)
 
