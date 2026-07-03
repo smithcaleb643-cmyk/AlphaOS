@@ -3,7 +3,7 @@ import time
 
 from core.live_alpha_controller import LIVE_ALPHA_STATE, stop_live_alpha
 from core.live_portfolio import get_live_portfolio
-from core.live_trade_executor import execute_live_buy
+from core.live_execution.executor import execute_live_buy
 from core.alpha_brain import rank_candidates
 from core.alpha_engine import get_ranked_live_opportunities
 from core.live_position_manager import manage_open_positions
@@ -28,25 +28,30 @@ def coin_name(candidate):
 def execute_candidate(candidate):
     name = coin_name(candidate)
 
-    payload = {
+    if LIVE_ALPHA_STATE["execution_mode"] == "MOCK":
+        return execute_mock_buy({
+            "coin_name": name,
+            "symbol": name,
+            "token_address": candidate.get("token_address"),
+            "score": int(candidate.get("score") or 0),
+            "probability": candidate.get("probability", 0),
+            "risk_score": candidate.get("risk_score", 0),
+            "reason": candidate.get("reason", ""),
+            "usd_amount": LIVE_ALPHA_STATE["trade_size_usd"],
+            "price_usd": candidate.get("price_usd"),
+        })
+
+    return execute_live_buy({
+        "token_address": candidate.get("token_address"),
+        "trade_size_usd": LIVE_ALPHA_STATE["trade_size_usd"],
+        "slippage_bps": 300,
         "coin_name": name,
         "symbol": name,
-        "token_address": candidate.get("token_address"),
         "score": int(candidate.get("score") or 0),
         "probability": candidate.get("probability", 0),
         "risk_score": candidate.get("risk_score", 0),
         "reason": candidate.get("reason", ""),
-        "usd_amount": LIVE_ALPHA_STATE["trade_size_usd"],
         "price_usd": candidate.get("price_usd"),
-    }
-
-    if LIVE_ALPHA_STATE["execution_mode"] == "MOCK":
-        return execute_mock_buy(payload)
-
-    return execute_live_buy({
-        **payload,
-        "sol_amount": 0.005,
-        "slippage_bps": 100,
     })
 
 
@@ -139,7 +144,7 @@ def _alpha_loop():
             LIVE_ALPHA_STATE["scans_today"] += 1
             LIVE_ALPHA_STATE["last_action"] = "Scanning with shared Alpha Brain..."
 
-            scan = get_ranked_live_opportunities(limit=100)
+            scan = get_ranked_live_opportunities(limit=20)
 
             if not scan.get("ok"):
                 LIVE_ALPHA_STATE["last_action"] = f"Scan skipped: {scan.get('reason')}"
@@ -172,6 +177,7 @@ def _alpha_loop():
 
                 if not token_address:
                     skipped += 1
+                    last_reason = "Missing token address"
                     continue
 
                 if token_address in held_tokens:
@@ -181,6 +187,7 @@ def _alpha_loop():
 
                 if action not in ["BUY", "WATCH"]:
                     skipped += 1
+                    last_reason = f"Action not tradable: {action}"
                     continue
 
                 approval = approve_trade(candidate, risk_state)
@@ -194,9 +201,9 @@ def _alpha_loop():
                 LIVE_ALPHA_STATE["last_action"] = f"Buying {name}..."
 
                 result = execute_candidate(candidate)
-                _last_buy_time = time.time()
 
                 if result.get("ok"):
+                    _last_buy_time = time.time()
                     bought += 1
                     slots_left -= 1
                     held_tokens.add(token_address)
@@ -206,11 +213,19 @@ def _alpha_loop():
                 else:
                     blocked += 1
                     last_reason = result.get("error") or result.get("message")
-                    LIVE_ALPHA_STATE["last_action"] = f"Buy failed: {last_reason}"
+                    LIVE_ALPHA_STATE["last_action"] = (
+                        f"BUY FAILED {name}: "
+                        f"{result.get('stage')} | "
+                        f"{result.get('error')} | "
+                        f"{result.get('message')}"
+                    )
 
             if bought == 0:
+                sample = ranked[0] if ranked else {}
                 LIVE_ALPHA_STATE["last_action"] = (
-                    f"No buys. blocked={blocked}, skipped={skipped}, reason={last_reason}"
+                    f"No buys. ranked={len(ranked)}, blocked={blocked}, skipped={skipped}, "
+                    f"top={coin_name(sample)}, action={sample.get('action')}, "
+                    f"score={sample.get('score')}, reason={last_reason}"
                 )
 
             time.sleep(5)

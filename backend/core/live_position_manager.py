@@ -103,6 +103,19 @@ def manage_open_positions():
     positions = portfolio.get("positions", [])
     actions = []
 
+    print(f"EXIT CHECK: {len(positions)} positions")
+
+    for p in positions:
+        print(
+            "EXIT POSITION:",
+            p.get("symbol"),
+            "mint=", p.get("mint"),
+            "entry=", p.get("entry_price"),
+            "current=", p.get("current_price"),
+            "pnl=", p.get("pnl_percent"),
+            "amount_raw=", p.get("amount_raw"),
+        )
+
     for position in positions:
         token_address = position.get("mint")
         decision = evaluate_exit_decision(position)
@@ -131,7 +144,24 @@ def manage_open_positions():
         mark_position_exiting(token_address)
 
         amount_raw = position.get("amount_raw")
-        sell_amount_raw = raw_fraction(amount_raw, decision.get("fraction", 1.0))
+
+        if not amount_raw or int(float(amount_raw)) <= 0:
+            actions.append({
+                "symbol": position.get("symbol"),
+                "action": "SELL_BLOCKED",
+                "reason": "No valid wallet-backed amount_raw found. Manual review required.",
+                "result": {
+                    "ok": False,
+                    "error": "Missing amount_raw",
+                },
+            })
+            clear_position_exiting(token_address)
+            continue
+
+        sell_amount_raw = raw_fraction(
+            amount_raw,
+            decision.get("fraction", 1.0),
+        )
 
         result = sell_with_retry(
             position=position,

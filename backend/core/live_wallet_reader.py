@@ -1,19 +1,28 @@
-import requests
+import os
 import time
+import requests
+from solders.keypair import Keypair
 
 SOLANA_RPC_URL = "https://api.mainnet-beta.solana.com"
-
-ALPHA_TEST_WALLET = "EFHxUKFpWTfgy64Q6rdsieDYTSgVVbfP1wqg5WaEEise"
 
 TOKEN_PROGRAMS = [
     "TokenkegQfeZyiNwAJbNbGKPFXCWuBvf9Ss623VQ5DA",
     "TokenzQdBNbLqP5VEhdkAS6EPFJC7nCnMb4nNq7Ls8U",
 ]
 
-
 _wallet_cache = None
 _wallet_cache_time = 0
 CACHE_SECONDS = 5
+
+
+def get_alpha_wallet_address():
+    private_key = os.getenv("SOLANA_PRIVATE_KEY")
+    if not private_key:
+        return None
+    return str(Keypair.from_base58_string(private_key).pubkey())
+
+
+ALPHA_TEST_WALLET = get_alpha_wallet_address()
 
 
 def rpc_call(method, params=None):
@@ -29,9 +38,27 @@ def rpc_call(method, params=None):
     return response.json()
 
 
-def read_sol_balance(wallet_address=ALPHA_TEST_WALLET):
+def read_sol_balance(wallet_address=None):
+    wallet_address = wallet_address or get_alpha_wallet_address()
+
+    if not wallet_address:
+        return {
+            "ok": False,
+            "connected": False,
+            "error": "Missing wallet address",
+        }
+
     try:
         data = rpc_call("getBalance", [wallet_address])
+
+        if "result" not in data:
+            print("SOL BALANCE RPC ERROR:", data)
+            return {
+                "ok": False,
+                "connected": False,
+                "error": data,
+            }
+
         lamports = data["result"]["value"]
 
         return {
@@ -52,29 +79,59 @@ def read_sol_balance(wallet_address=ALPHA_TEST_WALLET):
 def read_token_accounts_for_program(wallet_address, program_id):
     data = rpc_call(
         "getTokenAccountsByOwner",
-        [wallet_address, {"programId": program_id}, {"encoding": "jsonParsed"}],
+        [
+            wallet_address,
+            {"programId": program_id},
+            {"encoding": "jsonParsed"},
+        ],
     )
 
+    if "result" not in data:
+        print("TOKEN ACCOUNT RPC ERROR:", data)
+        return []
+
+    accounts = data["result"].get("value", [])
     tokens = []
 
-    for account in data["result"]["value"]:
-        info = account["account"]["data"]["parsed"]["info"]
-        token_amount = info.get("tokenAmount", {})
+    for account in accounts:
+        try:
+            info = account["account"]["data"]["parsed"]["info"]
+            token_amount = info.get("tokenAmount", {})
 
-        amount_raw = token_amount.get("amount", "0")
+            amount_raw = token_amount.get("amount", "0")
+            decimals = int(token_amount.get("decimals") or 0)
 
-        if int(amount_raw) <= 0:
-            continue
+            if int(amount_raw) <= 0:
+                continue
 
-        tokens.append({
-            "mint": info.get("mint"),
-            "amount": float(token_amount.get("uiAmount") or 0),
-        })
+            ui_amount = token_amount.get("uiAmount")
+
+            if ui_amount is None:
+                ui_amount = int(amount_raw) / (10 ** decimals) if decimals else int(amount_raw)
+
+            tokens.append({
+                "mint": info.get("mint"),
+                "amount": float(ui_amount),
+                "amount_raw": str(amount_raw),
+                "decimals": decimals,
+                "program_id": program_id,
+            })
+
+        except Exception as error:
+            print("TOKEN ACCOUNT PARSE FAILED:", error)
 
     return tokens
 
 
-def read_token_accounts(wallet_address=ALPHA_TEST_WALLET):
+def read_token_accounts(wallet_address=None):
+    wallet_address = wallet_address or get_alpha_wallet_address()
+
+    if not wallet_address:
+        return {
+            "token_count": 0,
+            "tokens": [],
+        }
+
     all_tokens = []
 
     for program_id in TOKEN_PROGRAMS:
@@ -83,7 +140,7 @@ def read_token_accounts(wallet_address=ALPHA_TEST_WALLET):
                 read_token_accounts_for_program(wallet_address, program_id)
             )
         except Exception as error:
-            print("TOKEN PROGRAM READ FAILED:", error)
+            print("TOKEN PROGRAM READ FAILED:", program_id, error)
 
     return {
         "token_count": len(all_tokens),
@@ -99,13 +156,15 @@ def live_wallet_status():
     if _wallet_cache and (now - _wallet_cache_time) < CACHE_SECONDS:
         return _wallet_cache
 
-    balance = read_sol_balance()
-    tokens = read_token_accounts()
+    wallet_address = get_alpha_wallet_address()
+
+    balance = read_sol_balance(wallet_address)
+    tokens = read_token_accounts(wallet_address)
 
     result = {
         "ok": balance.get("ok"),
         "connected": balance.get("connected"),
-        "wallet_address": ALPHA_TEST_WALLET,
+        "wallet_address": wallet_address,
         "sol_balance": balance.get("sol_balance", 0),
         "lamports": balance.get("lamports", 0),
         "token_count": tokens.get("token_count", 0),

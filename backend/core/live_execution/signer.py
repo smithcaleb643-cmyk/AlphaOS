@@ -10,18 +10,21 @@ def sign_swap(result, keypair: Keypair):
         if not tx_b64:
             return {"ok": False, "error": "Missing swap transaction"}
 
-        # decode base64 → bytes
+        # decode base64
         tx_bytes = base64.b64decode(tx_b64)
 
-        # convert → VersionedTransaction
+        # deserialize transaction
         tx = VersionedTransaction.from_bytes(tx_bytes)
 
-        # sign
-        signed_tx = VersionedTransaction(tx.message, [keypair])
+        # SIGNING FIX (correct solders method)
+        signed_tx = VersionedTransaction(
+            tx.message,
+            [keypair]   # signer list
+        )
 
         return {
             "ok": True,
-            "signed_transaction": signed_tx
+            "signed_transaction": base64.b64encode(bytes(signed_tx)).decode("utf-8")
         }
 
     except Exception as e:

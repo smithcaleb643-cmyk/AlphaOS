@@ -1,6 +1,7 @@
 from enum import Enum
 from core.paper_trader import create_paper_trade, get_paper_state
 from core.trade_manager import update_open_trades
+from core.live_execution.executor import execute_live_buy
 
 
 class ExecutionMode(Enum):
@@ -50,10 +51,6 @@ class ControlBrain:
     # -------------------------
 
     def apply_learning(self, signal):
-        """
-        Adjusts score based on past performance.
-        """
-
         base_score = float(signal.get("score", 0))
         adjusted = base_score + self.learning_bias
 
@@ -61,12 +58,6 @@ class ControlBrain:
         return signal
 
     def update_learning_bias(self, trade_result):
-        """
-        Simple reinforcement:
-        - winning trades increase bias
-        - losing trades reduce bias
-        """
-
         pnl = float(trade_result.get("pnl_percent", 0))
 
         if pnl > 5:
@@ -133,7 +124,6 @@ class ControlBrain:
             trade = create_paper_trade(signal)
             self.stats["paper_trades"] += 1
 
-            # LIVE SIMULATION ONLY (no real money)
             return {
                 "ok": True,
                 "mode": "MIRROR",
@@ -141,21 +131,16 @@ class ControlBrain:
             }
 
         # -------------------------
-        # LIVE MODE
+        # LIVE MODE (FIXED)
         # -------------------------
         if self.mode == ExecutionMode.LIVE:
-            if self.paper_first_required:
-                paper_trade = create_paper_trade(signal)
 
-            # placeholder for real execution hook
+            # THIS IS THE FIX — actual execution now happens
+            result = execute_live_buy(signal)
+
             self.stats["live_trades"] += 1
 
-            return {
-                "ok": True,
-                "mode": "LIVE",
-                "signal": signal,
-                "note": "Hook to execution_manager goes here",
-            }
+            return result
 
         return {
             "ok": False,
@@ -163,5 +148,5 @@ class ControlBrain:
         }
 
 
-# Global instance (your system controller)
+# Global instance
 control_brain = ControlBrain()

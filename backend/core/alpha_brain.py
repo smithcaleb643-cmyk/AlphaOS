@@ -1,6 +1,5 @@
 from datetime import datetime
 
-
 TP1_PERCENT = 6
 TP2_PERCENT = 12
 TP3_PERCENT = 24
@@ -24,7 +23,6 @@ def minutes_held(value):
     try:
         if not value:
             return 0
-
         started = datetime.fromisoformat(value)
         return (datetime.utcnow() - started).total_seconds() / 60
     except Exception:
@@ -173,6 +171,7 @@ def evaluate_exit_decision(position):
         return {
             "should_sell": False,
             "label": "HOLD",
+            "updates": {},
             "message": "Holding. Missing valid entry/current price.",
         }
 
@@ -183,7 +182,11 @@ def evaluate_exit_decision(position):
     old_highest = safe_float(position.get("highest_seen"), entry)
     highest_seen = max(old_highest, current)
 
-    stop_loss = safe_float(position.get("stop_loss"), entry * BASE_STOP_LOSS_MULTIPLIER)
+    stop_loss = safe_float(
+        position.get("stop_loss"),
+        entry * BASE_STOP_LOSS_MULTIPLIER,
+    )
+
     updates = {}
 
     if highest_seen > old_highest:
@@ -194,6 +197,28 @@ def evaluate_exit_decision(position):
         if trailing_stop > stop_loss:
             stop_loss = trailing_stop
             updates["stop_loss"] = trailing_stop
+
+    if pnl_percent <= -10:
+        return {
+            "should_sell": True,
+            "label": "CLOSED_MAX_LOSS",
+            "fraction": 1.0,
+            "updates": updates,
+            "urgent": True,
+            "exit_price": current,
+            "message": f"Max loss hit: {round(pnl_percent, 2)}%. Sell 100%.",
+        }
+
+    if current <= stop_loss:
+        return {
+            "should_sell": True,
+            "label": "CLOSED_STOP",
+            "fraction": 1.0,
+            "updates": updates,
+            "urgent": True,
+            "exit_price": current,
+            "message": f"Stop hit ({round(pnl_percent, 2)}%). Sell 100%.",
+        }
 
     if not position.get("tp1_hit") and pnl_percent >= TP1_PERCENT:
         return {
@@ -235,26 +260,6 @@ def evaluate_exit_decision(position):
                 "highest_seen": highest_seen,
             },
             "message": f"TP3 hit: {round(pnl_percent, 2)}%. Sell 25%, trail runner.",
-        }
-
-    if current <= stop_loss:
-        if position.get("tp3_hit"):
-            label = "CLOSED_TRAILING_RUNNER"
-        elif position.get("tp2_hit"):
-            label = "CLOSED_LOCKED_PROFIT"
-        elif position.get("tp1_hit"):
-            label = "CLOSED_BREAKEVEN"
-        else:
-            label = "CLOSED_STOP"
-
-        return {
-            "should_sell": True,
-            "label": label,
-            "fraction": 1.0,
-            "updates": updates,
-            "urgent": True,
-            "exit_price": stop_loss,
-            "message": f"{label}: price {current} <= stop {stop_loss}",
         }
 
     held = minutes_held(position.get("entry_time") or position.get("opened_at"))

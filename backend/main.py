@@ -350,94 +350,105 @@ def engine_state():
 # LIVE WALLET + STATE ENDPOINTS
 # ================================
 
-@app.get("/live/wallet/status")
-def live_wallet_status_endpoint():
+
+# ================================
+# LIVE TRADE FEED (UI SUPPORT)
+# ================================
+
+from core.live_execution.executor import TRADE_FEED, POSITIONS
+
+
+# ================================
+# LIVE UI / EXECUTION ROUTES
+# ================================
+
+@app.get("/live/trades")
+def live_trades():
     try:
-        from core.live_wallet_reader import live_wallet_status
-        return live_wallet_status()
-    except Exception as error:
+        from core.live_trade_journal import load_live_trade_journal
+        return load_live_trade_journal()
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
+
+
+@app.get("/live/positions")
+def live_positions():
+    try:
+        from core.live_portfolio import get_live_portfolio
+        portfolio = get_live_portfolio()
         return {
-            "ok": False,
-            "connected": False,
-            "message": "Live wallet reader failed to load.",
-            "error": str(error),
+            "ok": True,
+            "positions": portfolio.get("positions", []),
+            "open_count": portfolio.get("open_positions", 0),
         }
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
 
 
-@app.get("/live/alpha/state")
-def live_alpha_state_endpoint():
-    return get_live_alpha_state()
-
-
-@app.post("/live/alpha/start")
-def live_alpha_start_endpoint():
-    return start_live_alpha()
-
-
-@app.post("/live/alpha/stop")
-def live_alpha_stop_endpoint():
-    return stop_live_alpha()
-
-
-@app.post("/live/alpha/settings")
-def live_alpha_settings_endpoint(payload: dict):
-    return update_live_alpha_settings(payload)
-
-
-@app.get("/live/alpha-wallet/status")
-def live_alpha_wallet_status():
-    return get_alpha_wallet_status()
+@app.get("/live/wallet/status")
+def live_wallet_status():
+    try:
+        from core.live_wallet_reader import live_wallet_status as reader
+        return reader()
+    except Exception as e:
+        return {"ok": False, "connected": False, "error": str(e)}
 
 
 @app.get("/live/portfolio")
 def live_portfolio():
-    return get_live_portfolio()
+    try:
+        from core.live_portfolio import get_live_portfolio
+        return get_live_portfolio()
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
 
 
 @app.get("/live/trade-journal")
 def live_trade_journal():
-    return load_live_trade_journal()
+    try:
+        from core.live_trade_journal import load_live_trade_journal
+        return load_live_trade_journal()
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
 
 
-@app.post("/live/decision/report")
-def live_decision_report(payload: dict):
-    return build_live_decision_report(payload)
+@app.post("/live/alpha/settings")
+def live_alpha_settings_endpoint(settings: dict):
+    try:
+        from core.live_alpha_controller import update_live_alpha_settings
+        return update_live_alpha_settings(settings)
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
 
 
-# ================================
-# JUPITER ENDPOINTS
-# ================================
-
-@app.post("/live/jupiter/quote")
-def live_jupiter_quote(payload: dict):
-    output_mint = payload.get("output_mint")
-    sol_amount = payload.get("sol_amount", 0.01)
-    slippage_bps = payload.get("slippage_bps", 100)
-
-    if not output_mint:
-        return {"ok": False, "error": "output_mint is required"}
-
-    return quote_sol_to_token(output_mint, sol_amount, slippage_bps)
+@app.post("/live/alpha/start")
+def live_alpha_start_endpoint():
+    try:
+        from core.live_alpha_controller import start_live_alpha
+        return start_live_alpha()
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
 
 
-@app.post("/live/jupiter/build-swap")
-def live_jupiter_build_swap(payload: dict):
-    output_mint = payload.get("output_mint")
-    sol_amount = payload.get("sol_amount", 0.01)
-    slippage_bps = payload.get("slippage_bps", 100)
-
-    if not output_mint:
-        return {"ok": False, "error": "output_mint is required"}
-
-    return build_swap_transaction(output_mint, sol_amount, slippage_bps)
+@app.post("/live/alpha/stop")
+def live_alpha_stop_endpoint():
+    try:
+        from core.live_alpha_controller import stop_live_alpha
+        return stop_live_alpha()
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
 
 
-# ================================
-# LIVE EXECUTION (FIXED LAYER)
-# ================================
+@app.get("/live/alpha/state")
+def live_alpha_state_endpoint():
+    try:
+        from core.live_alpha_controller import get_live_alpha_state
+        return get_live_alpha_state()
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
+
 
 def _normalize_trade_payload(payload: dict):
-    """prevents ALL your previous bugs (missing keys / wrong formats)"""
     return {
         "token_address": payload.get("token_address"),
         "trade_size_usd": float(payload.get("trade_size_usd") or 0),
@@ -449,26 +460,15 @@ def _normalize_trade_payload(payload: dict):
 def live_execute_buy_endpoint(payload: dict):
     try:
         from core.live_execution.executor import execute_live_buy
-
-        normalized = _normalize_trade_payload(payload)
-
-        return execute_live_buy(normalized)
-
+        return execute_live_buy(_normalize_trade_payload(payload))
     except Exception as e:
-        return {
-            "ok": False,
-            "stage": "API_ERROR",
-            "error": str(e),
-        }
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
 
 
 @app.post("/live/execute/sell")
 def live_execute_sell_endpoint(payload: dict):
     try:
-        return execute_live_sell(_normalize_trade_payload(payload))
+        from core.live_sell_executor import execute_live_sell
+        return execute_live_sell(payload)
     except Exception as e:
-        return {
-            "ok": False,
-            "stage": "API_ERROR",
-            "error": str(e),
-        }
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}

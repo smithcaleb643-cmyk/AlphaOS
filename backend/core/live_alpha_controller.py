@@ -4,7 +4,7 @@ LIVE_ALPHA_STATE = {
     "running": False,
     "mode": "LIVE",
     "execution_mode": "LIVE",
-    "trade_size_usd": 1.0,
+    "trade_size_usd": 0.001,
     "max_open_positions": 10,
     "max_daily_loss_usd": 2.0,
     "daily_profit_target_usd": 5.0,
@@ -34,7 +34,9 @@ def start_live_alpha():
 
     print("START LIVE ALPHA: importing loop...")
     from core.live_alpha_loop import launch_live_alpha
+    LIVE_ALPHA_STATE["last_action"] = "Loop launch requested."
     launch_live_alpha()
+    LIVE_ALPHA_STATE["last_action"] = "Loop launch requested."
     print("START LIVE ALPHA: loop launched.")
 
     return get_live_alpha_state()

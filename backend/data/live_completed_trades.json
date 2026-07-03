@@ -4045,5 +4045,32 @@
       "held_minutes": 6.48249215,
       "sell_attempt": 1
     }
+  },
+  {
+    "id": 151,
+    "created_at": "2026-07-03T23:29:59.074736",
+    "type": "LIVE_COMPLETED_TRADE",
+    "token_address": "13QUwwFK5bMTrxZ9xhYpD8oEVizRSFk79nTQqtvFEASY",
+    "entry_signature": "2vV8jBRTYvRtda4V4h6oPoKYjR2o4KZjaF5xwNafKGq1tVK5aYMsUQby5re9uKcskvPCEL6rmpjJhDXLhNkoH7aq",
+    "exit_signature": "PHznv9xSkECq2y6FQ8sFBU5Z216HhPtsk6UNAnUonfZ7619VxBTpxgcb18ttA9s1YwtC3h8rxT8tCBLjF8uhCh9",
+    "entry_price": 6.738e-05,
+    "exit_price": 6.738e-05,
+    "pnl_percent": -7.565063822288883,
+    "pnl_usd": -0.006089078647662283,
+    "held_minutes": 1838.3086546833333,
+    "exit_reason": "MAX_HOLD_TIME",
+    "raw_payload": {
+      "token_address": "13QUwwFK5bMTrxZ9xhYpD8oEVizRSFk79nTQqtvFEASY",
+      "amount_raw": "69011927",
+      "slippage_bps": 150,
+      "exit_reason": "MAX_HOLD_TIME",
+      "entry_signature": "2vV8jBRTYvRtda4V4h6oPoKYjR2o4KZjaF5xwNafKGq1tVK5aYMsUQby5re9uKcskvPCEL6rmpjJhDXLhNkoH7aq",
+      "entry_price": 6.738e-05,
+      "exit_price": 6.738e-05,
+      "pnl_percent": -7.565063822288883,
+      "pnl_usd": -0.006089078647662283,
+      "held_minutes": 1838.3086546833333,
+      "sell_attempt": 1
+    }
   }
 ]

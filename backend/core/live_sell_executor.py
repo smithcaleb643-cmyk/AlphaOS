@@ -1,14 +1,12 @@
-from core.alpha_wallet_manager import get_alpha_wallet_address
+import requests
+import time
+
+from core.live_wallet_reader import get_alpha_wallet_address, live_wallet_status
 from core.jupiter_service import JUPITER_QUOTE_URL, SOL_MINT
 from core.live_transaction_signer import sign_swap_transaction
 from core.live_transaction_sender import send_signed_transaction
 from core.live_trade_journal import record_live_sell
 from core.live_learning_recorder import record_live_completed_trade
-from core.live_wallet_reader import live_wallet_status
-
-import requests
-import time
-
 
 JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap"
 
@@ -29,11 +27,14 @@ def get_sell_quote(input_mint, amount_raw, slippage_bps=150):
 def build_sell_transaction(input_mint, amount_raw, slippage_bps=150):
     wallet_address = get_alpha_wallet_address()
 
-    quote = get_sell_quote(
-        input_mint=input_mint,
-        amount_raw=amount_raw,
-        slippage_bps=slippage_bps,
-    )
+    if not wallet_address:
+        return {
+            "ok": False,
+            "stage": "WALLET_FAIL",
+            "error": "Missing wallet address from SOLANA_PRIVATE_KEY",
+        }
+
+    quote = get_sell_quote(input_mint, amount_raw, slippage_bps)
 
     payload = {
         "quoteResponse": quote,
@@ -45,7 +46,6 @@ def build_sell_transaction(input_mint, amount_raw, slippage_bps=150):
 
     response = requests.post(JUPITER_SWAP_URL, json=payload, timeout=20)
     response.raise_for_status()
-
     swap_data = response.json()
 
     return {
@@ -62,40 +62,37 @@ def build_sell_transaction(input_mint, amount_raw, slippage_bps=150):
     }
 
 
-def _is_token_still_held(wallet, mint):
-    tokens = wallet.get("tokens", [])
-    for t in tokens:
-        if t.get("mint") == mint and float(t.get("amount", 0)) > 0:
-            return True
-    return False
-
-
-def _error_text(error):
-    return str(error or "")
+def _get_token_raw(wallet, mint):
+    for token in wallet.get("tokens", []):
+        if token.get("mint") == mint:
+            return int(float(token.get("amount_raw") or 0))
+    return 0
 
 
 def _is_blockhash_error(error):
-    text = _error_text(error).lower()
+    text = str(error or "").lower()
     return "blockhash not found" in text or "blockhash" in text
 
 
 def send_sell_with_fresh_blockhash_retry(input_mint, amount_raw, slippage_bps):
-    """
-    Builds, signs, and sends a sell transaction.
-    If Solana rejects it because the blockhash expired, rebuild Jupiter swap once
-    so the transaction has a fresh blockhash.
-    """
     last_built = None
     last_signed = None
     last_sent = None
 
     for attempt in range(1, 3):
-        built = build_sell_transaction(
-            input_mint=input_mint,
-            amount_raw=amount_raw,
-            slippage_bps=slippage_bps,
-        )
+        built = build_sell_transaction(input_mint, amount_raw, slippage_bps)
         last_built = built
+
+        if not built.get("ok"):
+            return {
+                "ok": False,
+                "stage": built.get("stage", "BUILD_FAIL"),
+                "error": built.get("error"),
+                "built": built,
+                "signed": last_signed,
+                "sent": last_sent,
+                "attempt": attempt,
+            }
 
         if not built.get("swap_transaction"):
             return {
@@ -175,6 +172,9 @@ def execute_live_sell(payload: dict):
         return {"ok": False, "stage": "VALIDATION", "error": "missing amount_raw"}
 
     try:
+        before_wallet = live_wallet_status()
+        before_raw = _get_token_raw(before_wallet, input_mint)
+
         sent_result = send_sell_with_fresh_blockhash_retry(
             input_mint=input_mint,
             amount_raw=amount_raw,
@@ -197,14 +197,18 @@ def execute_live_sell(payload: dict):
             return result
 
         signature = sent_result["signature"]
-
         confirmed = False
 
         for _ in range(6):
             time.sleep(2)
             wallet = live_wallet_status()
+            remaining_raw = _get_token_raw(wallet, input_mint)
 
-            if not _is_token_still_held(wallet, input_mint):
+            if remaining_raw <= 0:
+                confirmed = True
+                break
+
+            if remaining_raw < before_raw:
                 confirmed = True
                 break
 
@@ -224,7 +228,7 @@ def execute_live_sell(payload: dict):
 
         record_live_sell(result, payload)
 
-        if result["ok"]:
+        if confirmed:
             record_live_completed_trade(payload, result)
 
         return result

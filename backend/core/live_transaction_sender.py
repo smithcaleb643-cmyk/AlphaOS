@@ -31,7 +31,7 @@ def rpc_send(tx_b64):
             tx_b64,
             {
                 "encoding": "base64",
-                "skipPreflight": True,   # 🔥 IMPORTANT FIX
+                "skipPreflight": False,   # 🔥 IMPORTANT FIX
                 "maxRetries": 3
             }
         ]
