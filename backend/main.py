@@ -10,6 +10,8 @@ from core.live_transaction_sender import send_signed_transaction
 from core.live_sell_executor import execute_live_sell
 
 from core.live_trade_journal import load_live_trade_journal
+from core.live_trade_ledger import all_trades, get_open_trades, get_closed_trades, get_trade
+from core.live_analytics import build_live_analytics
 from core.live_portfolio import get_live_portfolio
 from core.live_alpha_controller import (
     get_live_alpha_state,
@@ -455,6 +457,85 @@ def _normalize_trade_payload(payload: dict):
         "slippage_bps": int(payload.get("slippage_bps") or 300),
     }
 
+
+
+
+# ================================
+# LIVE ANALYTICS
+# ================================
+
+@app.get("/live/analytics")
+def live_analytics_endpoint():
+    try:
+        return build_live_analytics()
+    except Exception as e:
+        return {
+            "ok": False,
+            "stage": "API_ERROR",
+            "error": str(e),
+        }
+
+
+# ================================
+# LIVE TRADE LEDGER V2
+# ================================
+
+@app.get("/live/ledger")
+def live_trade_ledger_endpoint():
+    try:
+        return {
+            "ok": True,
+            "count": len(all_trades()),
+            "trades": all_trades(),
+        }
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
+
+
+@app.get("/live/ledger/open")
+def live_trade_ledger_open_endpoint():
+    try:
+        trades = get_open_trades()
+        return {
+            "ok": True,
+            "count": len(trades),
+            "trades": trades,
+        }
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
+
+
+@app.get("/live/ledger/closed")
+def live_trade_ledger_closed_endpoint():
+    try:
+        trades = get_closed_trades()
+        return {
+            "ok": True,
+            "count": len(trades),
+            "trades": trades,
+        }
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
+
+
+@app.get("/live/ledger/{trade_id}")
+def live_trade_ledger_trade_endpoint(trade_id: str):
+    try:
+        trade = get_trade(trade_id)
+
+        if not trade:
+            return {
+                "ok": False,
+                "stage": "NOT_FOUND",
+                "error": "Ledger trade not found",
+            }
+
+        return {
+            "ok": True,
+            "trade": trade,
+        }
+    except Exception as e:
+        return {"ok": False, "stage": "API_ERROR", "error": str(e)}
 
 @app.post("/live/execute/buy")
 def live_execute_buy_endpoint(payload: dict):

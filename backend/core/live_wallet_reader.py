@@ -12,7 +12,9 @@ TOKEN_PROGRAMS = [
 
 _wallet_cache = None
 _wallet_cache_time = 0
-CACHE_SECONDS = 5
+CACHE_SECONDS = 1
+
+_session = requests.Session()
 
 
 def get_alpha_wallet_address():
@@ -25,6 +27,12 @@ def get_alpha_wallet_address():
 ALPHA_TEST_WALLET = get_alpha_wallet_address()
 
 
+def clear_wallet_cache():
+    global _wallet_cache, _wallet_cache_time
+    _wallet_cache = None
+    _wallet_cache_time = 0
+
+
 def rpc_call(method, params=None):
     payload = {
         "jsonrpc": "2.0",
@@ -33,7 +41,7 @@ def rpc_call(method, params=None):
         "params": params or [],
     }
 
-    response = requests.post(SOLANA_RPC_URL, json=payload, timeout=15)
+    response = _session.post(SOLANA_RPC_URL, json=payload, timeout=10)
     response.raise_for_status()
     return response.json()
 
@@ -148,12 +156,12 @@ def read_token_accounts(wallet_address=None):
     }
 
 
-def live_wallet_status():
+def live_wallet_status(force_refresh=False):
     global _wallet_cache, _wallet_cache_time
 
     now = time.time()
 
-    if _wallet_cache and (now - _wallet_cache_time) < CACHE_SECONDS:
+    if not force_refresh and _wallet_cache and (now - _wallet_cache_time) < CACHE_SECONDS:
         return _wallet_cache
 
     wallet_address = get_alpha_wallet_address()

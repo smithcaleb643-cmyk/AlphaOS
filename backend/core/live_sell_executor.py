@@ -1,14 +1,21 @@
 import requests
 import time
 
-from core.live_wallet_reader import get_alpha_wallet_address, live_wallet_status
+from core.live_wallet_reader import (
+    get_alpha_wallet_address,
+    live_wallet_status,
+    clear_wallet_cache,
+)
 from core.jupiter_service import JUPITER_QUOTE_URL, SOL_MINT
 from core.live_transaction_signer import sign_swap_transaction
 from core.live_transaction_sender import send_signed_transaction
 from core.live_trade_journal import record_live_sell
 from core.live_learning_recorder import record_live_completed_trade
+from core.live_trade_ledger import close_trade
 
 JUPITER_SWAP_URL = "https://lite-api.jup.ag/swap/v1/swap"
+
+_session = requests.Session()
 
 
 def get_sell_quote(input_mint, amount_raw, slippage_bps=150):
@@ -19,7 +26,7 @@ def get_sell_quote(input_mint, amount_raw, slippage_bps=150):
         "slippageBps": int(slippage_bps),
     }
 
-    response = requests.get(JUPITER_QUOTE_URL, params=params, timeout=15)
+    response = _session.get(JUPITER_QUOTE_URL, params=params, timeout=10)
     response.raise_for_status()
     return response.json()
 
@@ -44,7 +51,7 @@ def build_sell_transaction(input_mint, amount_raw, slippage_bps=150):
         "prioritizationFeeLamports": "auto",
     }
 
-    response = requests.post(JUPITER_SWAP_URL, json=payload, timeout=20)
+    response = _session.post(JUPITER_SWAP_URL, json=payload, timeout=15)
     response.raise_for_status()
     swap_data = response.json()
 
@@ -136,7 +143,7 @@ def send_sell_with_fresh_blockhash_retry(input_mint, amount_raw, slippage_bps):
         error = sent.get("error")
 
         if _is_blockhash_error(error) and attempt == 1:
-            time.sleep(1)
+            time.sleep(0.5)
             continue
 
         return {
@@ -172,7 +179,7 @@ def execute_live_sell(payload: dict):
         return {"ok": False, "stage": "VALIDATION", "error": "missing amount_raw"}
 
     try:
-        before_wallet = live_wallet_status()
+        before_wallet = live_wallet_status(force_refresh=True)
         before_raw = _get_token_raw(before_wallet, input_mint)
 
         sent_result = send_sell_with_fresh_blockhash_retry(
@@ -198,10 +205,13 @@ def execute_live_sell(payload: dict):
 
         signature = sent_result["signature"]
         confirmed = False
+        remaining_raw = before_raw
 
-        for _ in range(6):
-            time.sleep(2)
-            wallet = live_wallet_status()
+        clear_wallet_cache()
+
+        for _ in range(10):
+            time.sleep(0.5)
+            wallet = live_wallet_status(force_refresh=True)
             remaining_raw = _get_token_raw(wallet, input_mint)
 
             if remaining_raw <= 0:
@@ -222,6 +232,8 @@ def execute_live_sell(payload: dict):
             "signed": sent_result.get("signed"),
             "sent": sent_result.get("sent"),
             "send_attempt": sent_result.get("attempt"),
+            "before_raw": str(before_raw),
+            "remaining_raw": str(remaining_raw),
             "signal": payload,
             "message": "Sell confirmed" if confirmed else "Sell failed confirmation check",
         }
@@ -229,6 +241,20 @@ def execute_live_sell(payload: dict):
         record_live_sell(result, payload)
 
         if confirmed:
+            clear_wallet_cache()
+            ledger_id = payload.get("ledger_trade_id")
+            if ledger_id:
+                try:
+                    close_trade(ledger_id,{
+                        "exit_time": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                        "exit_price": payload.get("exit_price") or payload.get("current_price") or 0,
+                        "reason": payload.get("exit_reason"),
+                        "signature": signature,
+                        "pnl_percent": payload.get("pnl_percent"),
+                        "pnl_usd": payload.get("pnl_usd"),
+                    })
+                except Exception as e:
+                    print("LEDGER CLOSE FAILED:",e)
             record_live_completed_trade(payload, result)
 
         return result

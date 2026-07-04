@@ -1,9 +1,23 @@
+import time
 import requests
+from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core.price_audit import log_price_event
 
 DEX_TOKEN_PAIRS = "https://api.dexscreener.com/token-pairs/v1/solana"
 DEX_PROFILES = "https://api.dexscreener.com/token-profiles/latest/v1"
+
+_session = requests.Session()
+
+_pair_cache = {}
+_profiles_cache = {
+    "time": 0,
+    "data": [],
+}
+
+PAIR_CACHE_SECONDS = 8
+PROFILE_CACHE_SECONDS = 12
+MAX_SCAN_WORKERS = 10
 
 
 def safe_float(value):
@@ -13,10 +27,35 @@ def safe_float(value):
         return 0
 
 
-def get_token_pairs(token_address):
-    response = requests.get(f"{DEX_TOKEN_PAIRS}/{token_address}", timeout=10)
+def _cache_get(cache, key, max_age):
+    item = cache.get(key)
+    if not item:
+        return None
+
+    created_at, data = item
+    if time.time() - created_at > max_age:
+        cache.pop(key, None)
+        return None
+
+    return data
+
+
+def _cache_set(cache, key, data):
+    cache[key] = (time.time(), data)
+
+
+def get_token_pairs(token_address, use_cache=True):
+    if use_cache:
+        cached = _cache_get(_pair_cache, token_address, PAIR_CACHE_SECONDS)
+        if cached is not None:
+            return cached
+
+    response = _session.get(f"{DEX_TOKEN_PAIRS}/{token_address}", timeout=8)
     response.raise_for_status()
-    return response.json()
+    data = response.json()
+
+    _cache_set(_pair_cache, token_address, data)
+    return data
 
 
 def normalize_pair(pair):
@@ -87,8 +126,17 @@ def get_market_summary(token_address):
     return summary
 
 
-def discover_solana_tokens(limit=10):
-    response = requests.get(DEX_PROFILES, timeout=10)
+def discover_solana_tokens(limit=10, use_cache=True):
+    now = time.time()
+
+    if (
+        use_cache
+        and _profiles_cache["data"]
+        and now - _profiles_cache["time"] < PROFILE_CACHE_SECONDS
+    ):
+        return _profiles_cache["data"][:limit]
+
+    response = _session.get(DEX_PROFILES, timeout=8)
     response.raise_for_status()
 
     profiles = response.json()
@@ -98,44 +146,63 @@ def discover_solana_tokens(limit=10):
         if item.get("chainId") == "solana" and item.get("tokenAddress")
     ]
 
+    _profiles_cache["time"] = now
+    _profiles_cache["data"] = solana_profiles
+
     return solana_profiles[:limit]
+
+
+def _scan_one_profile(profile):
+    token_address = profile.get("tokenAddress")
+
+    if not token_address:
+        return None
+
+    try:
+        pairs = get_token_pairs(token_address)
+
+        if not pairs:
+            return None
+
+        best_pair = pairs[0]
+        normalized = normalize_pair(best_pair)
+        audit_market_summary(normalized, source="scan_live_market")
+
+        return {
+            "coin_name": normalized["coin_name"],
+            "symbol": normalized["symbol"],
+            "token_address": normalized["token_address"],
+            "pair_address": normalized["pair_address"],
+            "dex_url": normalized["url"],
+            "price_usd": normalized["price_usd"],
+            "liquidity": normalized["liquidity"].get("usd", 0),
+            "volume": normalized["volume"].get("h24", 0),
+            "market_cap": normalized["market_cap"],
+            "holders": normalized["holders"],
+            "age_minutes": normalized["age_minutes"],
+            "price_change": normalized["price_change"].get("h24", 0),
+        }
+
+    except Exception as error:
+        print("Failed live coin:", token_address, error)
+        return None
 
 
 def scan_live_market(limit=8):
     profiles = discover_solana_tokens(limit=limit)
     coins = []
 
-    for profile in profiles:
-        token_address = profile.get("tokenAddress")
+    if not profiles:
+        return coins
 
-        try:
-            pairs = get_token_pairs(token_address)
+    workers = min(MAX_SCAN_WORKERS, max(1, len(profiles)))
 
-            if not pairs:
-                continue
+    with ThreadPoolExecutor(max_workers=workers) as executor:
+        futures = [executor.submit(_scan_one_profile, profile) for profile in profiles]
 
-            best_pair = pairs[0]
-            normalized = normalize_pair(best_pair)
-            audit_market_summary(normalized, source="scan_live_market")
-
-            coin = {
-                "coin_name": normalized["coin_name"],
-                "symbol": normalized["symbol"],
-                "token_address": normalized["token_address"],
-                "pair_address": normalized["pair_address"],
-                "dex_url": normalized["url"],
-                "price_usd": normalized["price_usd"],
-                "liquidity": normalized["liquidity"].get("usd", 0),
-                "volume": normalized["volume"].get("h24", 0),
-                "market_cap": normalized["market_cap"],
-                "holders": normalized["holders"],
-                "age_minutes": normalized["age_minutes"],
-                "price_change": normalized["price_change"].get("h24", 0),
-            }
-
-            coins.append(coin)
-
-        except Exception as error:
-            print("Failed live coin:", token_address, error)
+        for future in as_completed(futures):
+            coin = future.result()
+            if coin:
+                coins.append(coin)
 
     return coins

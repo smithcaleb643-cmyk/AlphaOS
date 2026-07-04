@@ -13,6 +13,13 @@ from core.risk_manager import approve_trade
 
 _loop_thread = None
 _last_buy_time = 0
+_last_scan_time = 0
+_scan_backoff_until = 0
+
+EXIT_CHECK_SECONDS = 1
+SCAN_CHECK_SECONDS = 20
+SCAN_ERROR_BACKOFF_SECONDS = 45
+POST_BUY_PAUSE_SECONDS = 5
 
 
 def coin_name(candidate):
@@ -86,12 +93,25 @@ def build_live_risk_state(portfolio):
     }
 
 
+def is_rate_limit_error(scan_or_result):
+    text = str(scan_or_result).lower()
+    return (
+        "429" in text
+        or "too many requests" in text
+        or "rate limit" in text
+        or "ratelimit" in text
+    )
+
+
 def _alpha_loop():
-    global _last_buy_time
+    global _last_buy_time, _last_scan_time, _scan_backoff_until
 
     while LIVE_ALPHA_STATE["running"]:
         try:
-            LIVE_ALPHA_STATE["last_action"] = "Managing exits first..."
+            # ================================
+            # FAST LANE: EXITS ALWAYS FIRST
+            # ================================
+            LIVE_ALPHA_STATE["last_action"] = "Fast exit check..."
 
             position_result = manage_open_positions()
             failed_exit, failed_action = exit_failure_detected(position_result)
@@ -110,7 +130,6 @@ def _alpha_loop():
                 LIVE_ALPHA_STATE["last_action"] = (
                     f"Exit manager: {last.get('action')} — {last.get('reason')}"
                 )
-                time.sleep(2)
 
             portfolio = get_live_portfolio()
 
@@ -120,35 +139,63 @@ def _alpha_loop():
                 stop_live_alpha()
                 break
 
+            # ================================
+            # SLOW LANE: SCANS / NEW BUYS ONLY
+            # ================================
+            now = time.time()
+
+            if now < _scan_backoff_until:
+                wait_left = int(_scan_backoff_until - now)
+                LIVE_ALPHA_STATE["last_action"] = (
+                    f"Exit checks live. Scan backoff {wait_left}s."
+                )
+                time.sleep(EXIT_CHECK_SECONDS)
+                continue
+
+            if now - _last_scan_time < SCAN_CHECK_SECONDS:
+                time.sleep(EXIT_CHECK_SECONDS)
+                continue
+
+            _last_scan_time = now
+
             open_positions = int(portfolio.get("open_positions") or 0)
             max_positions = int(LIVE_ALPHA_STATE["max_open_positions"])
 
             if open_positions >= max_positions:
-                LIVE_ALPHA_STATE["last_action"] = "Waiting: max positions reached."
-                time.sleep(5)
+                LIVE_ALPHA_STATE["last_action"] = "Exit checks live. Max positions reached."
+                time.sleep(EXIT_CHECK_SECONDS)
                 continue
 
-            now = time.time()
             remaining = LIVE_ALPHA_STATE["buy_cooldown_seconds"] - (now - _last_buy_time)
 
             if remaining > 0:
-                LIVE_ALPHA_STATE["last_action"] = f"Cooldown {int(remaining)}s remaining."
-                time.sleep(3)
+                LIVE_ALPHA_STATE["last_action"] = (
+                    f"Exit checks live. Buy cooldown {int(remaining)}s."
+                )
+                time.sleep(EXIT_CHECK_SECONDS)
                 continue
 
             if not LIVE_ALPHA_STATE["auto_buy_enabled"]:
-                LIVE_ALPHA_STATE["last_action"] = "Auto Buy OFF. Monitoring exits only."
-                time.sleep(5)
+                LIVE_ALPHA_STATE["last_action"] = "Exit checks live. Auto Buy OFF."
+                time.sleep(EXIT_CHECK_SECONDS)
                 continue
 
             LIVE_ALPHA_STATE["scans_today"] += 1
-            LIVE_ALPHA_STATE["last_action"] = "Scanning with shared Alpha Brain..."
+            LIVE_ALPHA_STATE["last_action"] = "Scanning for new entries..."
 
             scan = get_ranked_live_opportunities(limit=20)
 
+            if is_rate_limit_error(scan):
+                _scan_backoff_until = time.time() + SCAN_ERROR_BACKOFF_SECONDS
+                LIVE_ALPHA_STATE["last_action"] = (
+                    f"Rate limited. Exits still live. Pausing scans {SCAN_ERROR_BACKOFF_SECONDS}s."
+                )
+                time.sleep(EXIT_CHECK_SECONDS)
+                continue
+
             if not scan.get("ok"):
                 LIVE_ALPHA_STATE["last_action"] = f"Scan skipped: {scan.get('reason')}"
-                time.sleep(5)
+                time.sleep(EXIT_CHECK_SECONDS)
                 continue
 
             ranked = rank_candidates(scan.get("ranked", []))
@@ -185,9 +232,17 @@ def _alpha_loop():
                     last_reason = f"Already holding {name}"
                     continue
 
-                if action not in ["BUY", "WATCH"]:
+                if action != "BUY":
                     skipped += 1
-                    last_reason = f"Action not tradable: {action}"
+                    last_reason = f"Action not BUY: {action}"
+                    continue
+
+                score = int(candidate.get("score") or 0)
+                minimum_score = int(LIVE_ALPHA_STATE.get("minimum_score") or 70)
+
+                if score < minimum_score:
+                    skipped += 1
+                    last_reason = f"Score {score} below live minimum {minimum_score}"
                     continue
 
                 approval = approve_trade(candidate, risk_state)
@@ -202,6 +257,13 @@ def _alpha_loop():
 
                 result = execute_candidate(candidate)
 
+                if is_rate_limit_error(result):
+                    _scan_backoff_until = time.time() + SCAN_ERROR_BACKOFF_SECONDS
+                    LIVE_ALPHA_STATE["last_action"] = (
+                        f"Buy rate limited. Exits still live. Pausing scans {SCAN_ERROR_BACKOFF_SECONDS}s."
+                    )
+                    break
+
                 if result.get("ok"):
                     _last_buy_time = time.time()
                     bought += 1
@@ -209,7 +271,7 @@ def _alpha_loop():
                     held_tokens.add(token_address)
                     LIVE_ALPHA_STATE["trades_today"] += 1
                     LIVE_ALPHA_STATE["last_action"] = f"LIVE BUY: {name}"
-                    time.sleep(2)
+                    time.sleep(POST_BUY_PAUSE_SECONDS)
                 else:
                     blocked += 1
                     last_reason = result.get("error") or result.get("message")
@@ -228,13 +290,13 @@ def _alpha_loop():
                     f"score={sample.get('score')}, reason={last_reason}"
                 )
 
-            time.sleep(5)
+            time.sleep(EXIT_CHECK_SECONDS)
 
         except Exception as error:
             LIVE_ALPHA_STATE["auto_buy_enabled"] = False
             LIVE_ALPHA_STATE["running"] = False
             LIVE_ALPHA_STATE["last_action"] = f"🚨 Live loop crash: {error}"
-            time.sleep(5)
+            time.sleep(2)
 
 
 def launch_live_alpha():
